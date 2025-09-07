@@ -1,0 +1,17 @@
+loguru>=0.7.2
+pywinauto>=0.6.8
+pywin32>=306
+opencv-python>=4.9.0.80
+numpy>=1.26.0
+pyautogui>=0.9.54
+python-dotenv>=1.0.1
+uiautomation>=2.0.18
+psutil>=5.9.0
+keyboard>=0.13.5
+ImageHash>=4.3.1
+interception>=0.6.0
+dxcam>=0.2.7
+requests>=2.32.3
+beautifulsoup4>=4.12.3
+tenacity>=8.5.0
+playwright>=1.47.0

@@ -1,0 +1,52 @@
+# ---- Python basics ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+*.manifest
+*.spec
+
+# Build/dist
+build/
+dist/
+pip-wheel-metadata/
+.cache/
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+env/
+
+# Environment/config
+.env
+.env.*
+
+# Testing/coverage
+.pytest_cache/
+.coverage*
+htmlcov/
+
+# Editors/IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Playwright reports (if any)
+playwright-report/
+test-results/
+
+
