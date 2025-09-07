@@ -24,8 +24,13 @@ def main() -> None:
     args = parse_args()
     p = Path(args.accounts)
     if not p.exists():
-        logger.error(f"Accounts not found: {p}")
-        return
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.touch()
+            logger.warning(f"Accounts not found: created empty {p}")
+        except Exception:
+            logger.error(f"Accounts not found and cannot create: {p}")
+            return
     first_line = ""
     for line in p.read_text(encoding="utf-8").splitlines():
         line = line.strip()

@@ -276,8 +276,13 @@ def main() -> None:
         mails_path.write_text("\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
     else:
         if not src.exists():
-            logger.error(f"Accounts not found: {src}")
-            return
+            try:
+                src.parent.mkdir(parents=True, exist_ok=True)
+                src.touch()
+                logger.warning(f"Accounts not found: created empty {src}")
+            except Exception:
+                logger.error(f"Accounts not found and cannot create: {src}")
+                return
         items_acc = list(iter_accounts(src))
         if args.limit > 0:
             items_acc = items_acc[:args.limit]

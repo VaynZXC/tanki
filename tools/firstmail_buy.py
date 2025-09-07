@@ -35,7 +35,10 @@ def main() -> None:
     args = parse_args()
     client = FirstmailHttpClient(api_key=args.api_key, base_url=args.base_url, key_file=args.key_file)
     out_path = Path(args.append)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        logger.warning(f"Cannot ensure parent dir for {out_path}")
     bought = 0
     seen: set[str] = set()
 
