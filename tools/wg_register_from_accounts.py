@@ -223,6 +223,7 @@ def main() -> None:
 
         lock_out = threading.Lock()
         lock_count = threading.Lock()
+        failed_no_mail_emails: set[str] = set()
         success_emails: set[str] = set()
 
         def worker(item: tuple[str, str | None, str]) -> None:
@@ -271,8 +272,11 @@ def main() -> None:
                         logger.warning(f"FAIL: {email} | {res.error}")
                     else:
                         if do_confirm:
-                            ok = confirm_via_firstmail(email, timeout_sec=args.confirm_wait, headless=args.headless, mailbox_password=password, firstmail_proxy=fm_proxy_raw)
+                            ok = confirm_via_firstmail(email, timeout_sec=args.confirm_wait, headless=args.headless, mailbox_password=password, firstmail_proxy=fm_proxy_raw, max_checks=(1 if args.confirm_once else 3))
                             logger.info(f"Confirm {'OK' if ok else 'FAIL'}: {email}")
+                            if not ok:
+                                with lock_out:
+                                    failed_no_mail_emails.add(email)
                             final_ok = ok
                         else:
                             final_ok = True
@@ -284,6 +288,14 @@ def main() -> None:
                             f.write(f"{email}\t{password}\n")
                         consumed_raw.append(raw_line)
                         success_emails.add(email)
+                else:
+                    # Если регистрация+подтверждение в одной вкладке и неуспех из-за отсутствия письма — пометим к удалению
+                    try:
+                        if do_in_page and isinstance(res.error, str) and res.error == "confirm_not_found":
+                            with lock_out:
+                                failed_no_mail_emails.add(email)
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.warning(f"Worker error for {email}: {exc}")
             finally:
@@ -298,6 +310,7 @@ def main() -> None:
         # (как ранее существовавшие в accounts.txt, так и успешно обработанные сейчас)
         to_remove_emails = set(already_registered_emails)
         to_remove_emails.update(success_emails)
+        to_remove_emails.update(failed_no_mail_emails)
         def _extract_email_from_line(ln: str) -> str:
             s = (ln or "").strip()
             if not s:

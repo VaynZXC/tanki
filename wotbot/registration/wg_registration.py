@@ -624,26 +624,29 @@ def fetch_confirmation_link_from_firstmail(email: str, mailbox_password: str | N
     return None
 
 
-def confirm_via_firstmail(email: str, timeout_sec: int = 180, headless: bool = False, mailbox_password: str | None = None, firstmail_proxy: str | None = None, page=None) -> bool:
+def confirm_via_firstmail(email: str, timeout_sec: int = 180, headless: bool = False, mailbox_password: str | None = None, firstmail_proxy: str | None = None, page=None, max_checks: int = 3) -> bool:
     start = time.monotonic()
-    deadline = start + max(1, timeout_sec)
     attempt = 0
     url: str | None = None
-    # poll loop
-    while True:
-        now = time.monotonic()
-        if now >= deadline:
-            break
-        attempt += 1
-        unread_only = (now - start) < (timeout_sec / 2)
-        url = fetch_confirmation_link_from_firstmail(email=email, mailbox_password=mailbox_password, firstmail_proxy=firstmail_proxy, unread_only=unread_only)
+    checks = max(1, int(max_checks))
+    # равномерные интервалы ожидания между проверками в рамках timeout_sec
+    interval = max(1.0, float(timeout_sec) / float(checks)) if timeout_sec else 2.0
+    for attempt in range(1, checks + 1):
+        unread_only = attempt < checks  # последняя проверка может брать и прочитанные
+        url = fetch_confirmation_link_from_firstmail(
+            email=email,
+            mailbox_password=mailbox_password,
+            firstmail_proxy=firstmail_proxy,
+            unread_only=unread_only,
+        )
         if url:
             logger.info(f"[confirm] Link: {url}")
             break
-        try:
-            time.sleep(min(4.0, max(0.5, deadline - time.monotonic())))
-        except Exception:
-            pass
+        if attempt < checks:
+            try:
+                time.sleep(interval)
+            except Exception:
+                pass
     if not url:
         logger.warning("[confirm] Confirmation link not found")
         return False
@@ -744,7 +747,7 @@ def register_on_site_and_confirm_in_page(
                 pass
             time.sleep(10.0)
 
-            ok = confirm_via_firstmail(email=email, timeout_sec=confirm_timeout_sec, headless=headless, mailbox_password=(mailbox_password or password), firstmail_proxy=firstmail_proxy, page=page)
+            ok = confirm_via_firstmail(email=email, timeout_sec=confirm_timeout_sec, headless=headless, mailbox_password=(mailbox_password or password), firstmail_proxy=firstmail_proxy, page=page, max_checks=(1 if confirm_once else 3))
             context.close()
             browser.close()
             return RegistrationResult(email=email, password=password, ok=ok)
