@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--mails", type=str, default="mails.txt", help="Path to mails file (one email per line)")
     ap.add_argument("--headless", action="store_true", help="Run headless browser (UI hidden)")
     ap.add_argument("--limit", type=int, default=0, help="Limit number of accounts to process (0 = all)")
-    ap.add_argument("--ref", type=str, default="EPICWIN", help="Referral code")
+    ap.add_argument("--ref", type=str, default="EPICWIN", help="Referral code (default: EPICWIN)")
     ap.add_argument("--confirm", action="store_true", help="Fetch email from Firstmail and confirm via link (new tab)")
     ap.add_argument("--confirm-in-page", action="store_true", help="Confirm using the same browser page (poll Firstmail and open link in-page)")
     ap.add_argument("--confirm-wait", type=int, default=180, help="Wait seconds for confirmation email (polling)")
@@ -39,11 +39,17 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--confirm-once", action="store_true", help="Single unread check (no polling)")
     ap.add_argument("--proxy", type=str, default="", help="Proxy in host:port:user:pass format for registration (Playwright). Empty = disabled")
     ap.add_argument("--proxy-file", type=str, default="proxy.txt", help="Path to file with proxies (one per line: host:port:user:pass). If exists, used round-robin per worker")
-    ap.add_argument("--workers", type=int, default=5, help="Parallel workers for registration")
-    ap.add_argument("--autobuy", action="store_true", help="Auto-buy Firstmail mailboxes if mails.txt is missing/empty")
+    ap.add_argument("--workers", type=int, default=5, help="Parallel workers for registration (default: 5)")
+    ap.add_argument("--autobuy", action="store_true", help="Auto-buy Firstmail mailboxes if mails.txt is missing/empty (default: ON)")
+    ap.add_argument("--target-total", type=int, default=100, help="How many accounts to create in total (defaults to 100). Counts existing in accounts file and stops when reached.")
     ap.add_argument("--autobuy-count", type=int, default=0, help="How many mailboxes to buy if empty (default: limit or workers)")
     ap.add_argument("--mail-type", type=int, default=3, help="Firstmail mailbox type (default: 3)")
-    return ap.parse_args()
+    args = ap.parse_args()
+    # enable autobuy by default if not explicitly disabled (flag style)
+    # argparse with action='store_true' gives False when not provided; we want default True
+    if '--autobuy' not in sys.argv:
+        args.autobuy = True
+    return args
 
 
 def iter_accounts(path: Path):
@@ -83,6 +89,20 @@ def main() -> None:
     proxy_file = Path(args.proxy_file) if args.proxy_file else None
 
     processed = 0
+
+    # Respect target_total: count already existing accounts and stop when reached
+    try:
+        existing_total = 0
+        if src.exists():
+            existing_total = sum(1 for ln in src.read_text(encoding="utf-8").splitlines() if ln.strip())
+        # how many more to do in this run
+        remaining_target = max(0, int(args.target_total) - existing_total)
+        if args.limit <= 0:
+            # if user did not set --limit, derive limit from remaining_target
+            args.limit = remaining_target if remaining_target > 0 else 0
+        logger.info(f"Target total={args.target_total}, already have={existing_total}, remaining limit={args.limit if args.limit>0 else 'unlimited'}")
+    except Exception:
+        pass
 
     def build_proxy_arg(raw: str | None):
         if not raw:
@@ -177,6 +197,8 @@ def main() -> None:
         original_lines = mails_path.read_text(encoding="utf-8").splitlines()
         consumed_raw: list[str] = []
         items = list(iter_mails(mails_path))
+        if args.limit > 0:
+            items = items[:args.limit]
 
         lock_out = threading.Lock()
         lock_count = threading.Lock()
@@ -257,6 +279,8 @@ def main() -> None:
             logger.error(f"Accounts not found: {src}")
             return
         items_acc = list(iter_accounts(src))
+        if args.limit > 0:
+            items_acc = items_acc[:args.limit]
         # Если регистрируем из accounts.txt и подтверждение не задано — не включаем по умолчанию
         do_in_page_acc = bool(args.confirm_in_page)
         do_confirm_acc = bool(args.confirm or args.confirm_in_page)
