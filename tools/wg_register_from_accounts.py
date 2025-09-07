@@ -33,13 +33,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ref", type=str, default="EPICWIN", help="Referral code (default: EPICWIN)")
     ap.add_argument("--confirm", action="store_true", help="Fetch email from Firstmail and confirm via link (new tab)")
     ap.add_argument("--confirm-in-page", action="store_true", help="Confirm using the same browser page (poll Firstmail and open link in-page)")
-    ap.add_argument("--confirm-wait", type=int, default=180, help="Wait seconds for confirmation email (polling)")
+    ap.add_argument("--confirm-wait", type=int, default=300, help="Wait seconds for confirmation email (polling)")
     ap.add_argument("--mailbox-pass", action="store_true", help="Use the same password from accounts.txt as mailbox password for Firstmail API")
     ap.add_argument("--firstmail-proxy", type=str, default="", help="Proxy for Firstmail API (host:port:user:pass)")
     ap.add_argument("--confirm-once", action="store_true", help="Single unread check (no polling)")
     ap.add_argument("--proxy", type=str, default="", help="Proxy in host:port:user:pass format for registration (Playwright). Empty = disabled")
     ap.add_argument("--proxy-file", type=str, default="proxy.txt", help="Path to file with proxies (one per line: host:port:user:pass). If exists, used round-robin per worker")
-    ap.add_argument("--workers", type=int, default=5, help="Parallel workers for registration (default: 5)")
+    ap.add_argument("--workers", type=int, default=1, help="Parallel workers for registration (default: 1)")
     ap.add_argument("--autobuy", action="store_true", help="Auto-buy Firstmail mailboxes if mails.txt is missing/empty (default: ON)")
     ap.add_argument("--target-total", type=int, default=100, help="How many accounts to create in total (defaults to 100). Counts existing in accounts file and stops when reached.")
     ap.add_argument("--autobuy-count", type=int, default=0, help="How many mailboxes to buy if empty (default: limit or workers)")
@@ -190,6 +190,10 @@ def main() -> None:
     if mails_path.exists() and not do_confirm:
         do_confirm = True
         logger.info("[confirm] Enabled by default (mails.txt detected, no flags provided)")
+    # По умолчанию подтверждаем в той же вкладке, если пользователь не указывал флаги
+    if do_confirm and not do_in_page and ("--confirm-in-page" not in sys.argv) and ("--confirm" not in sys.argv):
+        do_in_page = True
+        logger.info("[confirm] In-page mode enabled by default (same browser/page)")
 
     if mails_path.exists():
         out_path = src
@@ -289,6 +293,10 @@ def main() -> None:
         # Если регистрируем из accounts.txt и подтверждение не задано — не включаем по умолчанию
         do_in_page_acc = bool(args.confirm_in_page)
         do_confirm_acc = bool(args.confirm or args.confirm_in_page)
+        # Если подтверждение включено, но флаги не заданы — по умолчанию в той же вкладке
+        if do_confirm_acc and not do_in_page_acc and ("--confirm-in-page" not in sys.argv) and ("--confirm" not in sys.argv):
+            do_in_page_acc = True
+            logger.info("[confirm] In-page mode enabled by default (same browser/page)")
         lock_out = threading.Lock()
         lock_count = threading.Lock()
 

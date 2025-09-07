@@ -95,9 +95,9 @@ def _open_in_same_context(page, url: str) -> bool:
     Возвращает True при успехе."""
     logger.info(f"[confirm] Navigating to confirmation URL in same context: {url}")
     try:
-        page.goto(url)
+        page.goto(url, timeout=130000)
         try:
-            page.wait_for_load_state("networkidle", timeout=10000)
+            page.wait_for_load_state("networkidle", timeout=130000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -108,7 +108,7 @@ def _open_in_same_context(page, url: str) -> bool:
     try:
         page.evaluate("(u)=>{window.location.href=u}", url)
         try:
-            page.wait_for_load_state("networkidle", timeout=10000)
+            page.wait_for_load_state("networkidle", timeout=130000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -118,9 +118,9 @@ def _open_in_same_context(page, url: str) -> bool:
     # Fallback: новая вкладка в том же контексте
     try:
         new_page = page.context.new_page()
-        new_page.goto(url)
+        new_page.goto(url, timeout=130000)
         try:
-            new_page.wait_for_load_state("networkidle", timeout=10000)
+            new_page.wait_for_load_state("networkidle", timeout=130000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -129,22 +129,39 @@ def _open_in_same_context(page, url: str) -> bool:
         logger.warning(f"[confirm] New page navigation failed: {exc}")
         return False
 
-def _ensure_bonus_field_visible(page, attempts: int = 5, pause_after_click: float = 0.5) -> bool:
+def _ensure_bonus_field_visible(page, attempts: int = 8, pause_after_click: float = 0.5) -> bool:
     """Открывает поле промокода, если оно скрыто. Возвращает True, если поле видно."""
+    toggler_selectors = [
+        'label[for="bonus-regform"]',
+        '#bonus-regform',
+        '[data-testid="bonus-regform"]',
+        '[aria-controls="bonus-regform"]',
+        'button[aria-controls="bonus-regform"]',
+        'text=Invitation Code',
+        'text=Invite code',
+        'text=I have an invite code',
+        'text=Have an invite code',
+        'text=Referral code',
+        'text=Bonus code',
+        'text=Pozvánkový kód',
+        'text=Code d\'invitation',
+        'text=Код приглашения',
+        'text=Пригласительный код',
+        'text=Промокод',
+        'text=Реферальный код',
+    ]
     for _ in range(max(1, attempts)):
         try:
             if page.locator('#bonus-regform').is_visible():
                 return True
         except Exception:
             pass
-        for sel in [
-            'label[for="bonus-regform"]',
-            '#bonus-regform',
-            '[data-testid="bonus-regform"]',
-            'text=Pozvánkový kód',
-            'text=Code d\'invitation',
-            'text=Invitation Code',
-        ]:
+        # попытка скролла вниз перед кликами
+        try:
+            page.keyboard.press('End')
+        except Exception:
+            pass
+        for sel in toggler_selectors:
             try:
                 loc = page.locator(sel)
                 if loc.count() > 0:
@@ -152,15 +169,107 @@ def _ensure_bonus_field_visible(page, attempts: int = 5, pause_after_click: floa
                         loc.first.scroll_into_view_if_needed()
                     except Exception:
                         pass
-                    loc.first.click()
+                    try:
+                        loc.first.click()
+                    except Exception:
+                        try:
+                            loc.first.click(force=True, timeout=500)
+                        except Exception:
+                            pass
                     time.sleep(pause_after_click)
-                    break
+                    # проверим, не стало ли поле видимым
+                    try:
+                        if page.locator('#bonus-regform').is_visible():
+                            return True
+                    except Exception:
+                        pass
             except Exception:
                 continue
     try:
         return page.locator('#bonus-regform').is_visible()
     except Exception:
         return False
+
+
+def _force_fill_bonus_code(page, referral_code: str, attempts: int = 3) -> bool:
+    """Надёжно вводит промокод в поле, с проверкой значения и JS-фолбэками."""
+    for _ in range(max(1, attempts)):
+        try:
+            _ensure_bonus_field_visible(page, attempts=3, pause_after_click=0.5)
+        except Exception:
+            pass
+        # Попытка через локатор
+        try:
+            bonus = page.locator('#bonus-regform')
+            if bonus.count() > 0:
+                try:
+                    bonus.first.wait_for(state='visible', timeout=2000)
+                except Exception:
+                    pass
+                try:
+                    bonus.first.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    bonus.first.click()
+                    time.sleep(0.15)
+                except Exception:
+                    pass
+                try:
+                    bonus.first.fill(referral_code, timeout=2000)
+                except Exception:
+                    pass
+                # Верификация значения
+                try:
+                    val = bonus.first.input_value(timeout=800)
+                except Exception:
+                    val = None
+                if val == referral_code:
+                    return True
+        except Exception:
+            pass
+        # JS-фолбэк по множеству селекторов
+        try:
+            filled = page.evaluate(
+                """
+                (code)=>{
+                  const sels=['#bonus-regform','input#bonus-regform','input[name*="bonus"]','input[id*="bonus"]','input[name*="promo"]','input[id*="promo"]','input[name*="invite"]','input[id*="invite"]'];
+                  for(const s of sels){
+                    const el=document.querySelector(s);
+                    if(el){
+                      try{ el.focus(); }catch(e){}
+                      el.value=code;
+                      el.dispatchEvent(new Event('input',{bubbles:true}));
+                      el.dispatchEvent(new Event('change',{bubbles:true}));
+                      return true;
+                    }
+                  }
+                  return false;
+                }
+                """,
+                referral_code,
+            )
+            if filled:
+                ok = page.evaluate(
+                    """
+                    (code)=>{
+                      const el=document.querySelector('#bonus-regform')||document.querySelector('input[name*="bonus"],input[id*="bonus"],input[name*="promo"],input[id*="promo"],input[name*="invite"],input[id*="invite"]');
+                      return !!(el && el.value===code);
+                    }
+                    """,
+                    referral_code,
+                )
+                if ok:
+                    return True
+        except Exception:
+            pass
+        # Небольшая пауза и повтор
+        try:
+            page.keyboard.press('End')
+        except Exception:
+            pass
+        time.sleep(0.4)
+    return False
 
 def _install_cookie_watcher_js(page, interval_ms: int = 5000) -> None:
     """Ставит JS-таймер в странице, который каждые interval_ms кликает по баннеру.
@@ -313,30 +422,12 @@ def register_on_site(
                         pass
             filled_count += 1
             logger.info(f"[reg] Progress: filled {filled_count}/{total_fields} including birth date")
-            # Ensure promo field is visible
-            _ensure_bonus_field_visible(page, attempts=4, pause_after_click=0.5)
-            try:
-                bonus = page.locator('#bonus-regform')
-                try:
-                    bonus.wait_for(state='visible', timeout=2000)
-                except Exception:
-                    pass
-                try:
-                    bonus.scroll_into_view_if_needed()
-                except Exception:
-                    pass
-                try:
-                    bonus.click()
-                    time.sleep(0.15)
-                except Exception:
-                    pass
-                bonus.fill(referral_code, timeout=2000)
+            # Ensure promo field is visible and fill reliably
+            ok_bonus = _force_fill_bonus_code(page, referral_code)
+            if ok_bonus:
                 logger.info(f"[reg] Progress: filled referral code ({filled_count}/{total_fields}+)")
-            except Exception:
-                try:
-                    page.evaluate("(val)=>{const el=document.querySelector('#bonus-regform'); if(el){el.value=val; el.dispatchEvent(new Event('input',{bubbles:true}));}}", referral_code)
-                except Exception:
-                    pass
+            else:
+                logger.warning("[reg] Failed to reliably fill referral code field")
             lbl = page.locator('label[for="policy-regform"]').first
             try:
                 lbl.scroll_into_view_if_needed()
@@ -633,28 +724,9 @@ def register_on_site_and_confirm_in_page(
                     except Exception:
                         pass
             filled_count += 1
-            _ensure_bonus_field_visible(page, attempts=4, pause_after_click=0.5)
-            try:
-                bonus = page.locator('#bonus-regform')
-                try:
-                    bonus.wait_for(state='visible', timeout=2000)
-                except Exception:
-                    pass
-                try:
-                    bonus.scroll_into_view_if_needed()
-                except Exception:
-                    pass
-                try:
-                    bonus.click()
-                    time.sleep(0.15)
-                except Exception:
-                    pass
-                bonus.fill(referral_code, timeout=2000)
-            except Exception:
-                try:
-                    page.evaluate("(val)=>{const el=document.querySelector('#bonus-regform'); if(el){el.value=val; el.dispatchEvent(new Event('input',{bubbles:true}));}}", referral_code)
-                except Exception:
-                    pass
+            ok_bonus = _force_fill_bonus_code(page, referral_code)
+            if not ok_bonus:
+                logger.warning("[reg] Failed to reliably fill referral code field")
             lbl = page.locator('label[for="policy-regform"]').first
             try:
                 lbl.scroll_into_view_if_needed()
