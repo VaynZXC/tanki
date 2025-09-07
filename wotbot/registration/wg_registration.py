@@ -624,13 +624,11 @@ def fetch_confirmation_link_from_firstmail(email: str, mailbox_password: str | N
     return None
 
 
-def confirm_via_firstmail(email: str, timeout_sec: int = 180, headless: bool = False, mailbox_password: str | None = None, firstmail_proxy: str | None = None, page=None, max_checks: int = 3) -> bool:
-    start = time.monotonic()
-    attempt = 0
+def confirm_via_firstmail(email: str, timeout_sec: int = 180, headless: bool = False, mailbox_password: str | None = None, firstmail_proxy: str | None = None, page=None, max_checks: int = 3, check_interval_sec: float = 2.0) -> bool:
+    # Делаем ровно max_checks попыток с быстрым интервалом ожидания между ними.
     url: str | None = None
     checks = max(1, int(max_checks))
-    # равномерные интервалы ожидания между проверками в рамках timeout_sec
-    interval = max(1.0, float(timeout_sec) / float(checks)) if timeout_sec else 2.0
+    interval = max(0.5, float(check_interval_sec))
     for attempt in range(1, checks + 1):
         unread_only = attempt < checks  # последняя проверка может брать и прочитанные
         url = fetch_confirmation_link_from_firstmail(

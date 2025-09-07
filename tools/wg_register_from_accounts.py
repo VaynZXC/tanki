@@ -198,8 +198,7 @@ def main() -> None:
     if mails_path.exists():
         out_path = src
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        original_lines = mails_path.read_text(encoding="utf-8").splitlines()
-        consumed_raw: list[str] = []
+        # Не держим снэпшот; будем удалять строки по мере обработки и перечитывать при финальной очистке
         # emails already registered (present in accounts file)
         already_registered_emails: set[str] = set()
         try:
@@ -226,12 +225,41 @@ def main() -> None:
         failed_no_mail_emails: set[str] = set()
         success_emails: set[str] = set()
 
+        def _remove_email_from_mails_file(email_to_remove: str) -> None:
+            with lock_out:
+                try:
+                    if not mails_path.exists():
+                        return
+                    lines_now = mails_path.read_text(encoding="utf-8").splitlines()
+                    new_lines: list[str] = []
+                    for ln in lines_now:
+                        s = (ln or "").strip()
+                        if not s:
+                            continue
+                        # извлечём email из строки
+                        if "\t" in s:
+                            parts = s.split("\t")
+                        elif ":" in s:
+                            parts = s.split(":")
+                        else:
+                            parts = s.split()
+                        e = parts[0].strip() if parts else ""
+                        if e and e == email_to_remove:
+                            continue
+                        new_lines.append(s)
+                    mails_path.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
+                    logger.info(f"[mails] Removed from file at start: {email_to_remove}")
+                except Exception as exc:
+                    logger.warning(f"[mails] Failed to remove {email_to_remove} from mails.txt: {exc}")
+
         def worker(item: tuple[str, str | None, str]) -> None:
             nonlocal processed
             email, mailbox_pwd, raw_line = item
             if not mailbox_pwd:
                 logger.warning(f"No mailbox password for {email} in mails file — skipping")
                 return
+            # Удаляем текущую строку из mails.txt сразу, чтобы при переходе к следующей она не осталась
+            _remove_email_from_mails_file(email)
             password = mailbox_pwd
             local_part = email.split("@", 1)[0]
             suffix = "".join(random.choice(string.ascii_lowercase) for _ in range(6))
@@ -286,7 +314,6 @@ def main() -> None:
                     with lock_out:
                         with out_path.open("a", encoding="utf-8") as f:
                             f.write(f"{email}\t{password}\n")
-                        consumed_raw.append(raw_line)
                         success_emails.add(email)
                 else:
                     # Если регистрация+подтверждение в одной вкладке и неуспех из-за отсутствия письма — пометим к удалению
@@ -307,7 +334,7 @@ def main() -> None:
             for _ in as_completed(futures):
                 pass
         # Перезаписываем mails.txt, удаляя строки с email, которые уже зарегистрированы
-        # (как ранее существовавшие в accounts.txt, так и успешно обработанные сейчас)
+        # (как ранее существовавшие в accounts.txt, так и успешно обработанные сейчас/удалённые на старте)
         to_remove_emails = set(already_registered_emails)
         to_remove_emails.update(success_emails)
         to_remove_emails.update(failed_no_mail_emails)
@@ -323,7 +350,11 @@ def main() -> None:
                 parts = s.split()
             return parts[0].strip() if parts else ""
         remaining: list[str] = []
-        for ln in original_lines:
+        try:
+            current_lines = mails_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            current_lines = []
+        for ln in current_lines:
             email_in_line = _extract_email_from_line(ln)
             if email_in_line and email_in_line in to_remove_emails:
                 continue
