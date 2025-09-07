@@ -300,6 +300,42 @@ def _install_cookie_watcher_js(page, interval_ms: int = 5000) -> None:
     except Exception:
         pass
 
+
+def _collect_visible_input_errors(page) -> list[str]:
+    errors: list[str] = []
+    try:
+        loc = page.locator('.input_error')
+        count = loc.count()
+        for i in range(min(count, 20)):
+            try:
+                el = loc.nth(i)
+                if el.is_visible():
+                    try:
+                        txt = el.inner_text(timeout=500)
+                    except Exception:
+                        txt = ""
+                    if isinstance(txt, str) and txt.strip():
+                        errors.append(txt.strip())
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return errors
+
+
+def _poll_input_errors(page, total_wait_sec: float = 8.0, interval_sec: float = 1.0) -> str | None:
+    tries = max(1, int(total_wait_sec / max(0.2, interval_sec)))
+    for _ in range(tries):
+        errs = _collect_visible_input_errors(page)
+        if errs:
+            return errs[0]
+        try:
+            time.sleep(interval_sec)
+        except Exception:
+            pass
+    errs = _collect_visible_input_errors(page)
+    return errs[0] if errs else None
+
 def _ensure_registration_form(page) -> None:
     """Убедиться, что форма регистрации открыта и поля видимы."""
     # logger.debug("[reg] Ensuring registration form is visible")
@@ -439,6 +475,18 @@ def register_on_site(
                 lbl.click(force=True)
                 time.sleep(0.1)
             page.locator("#regform_submit").click()
+            # Быстрая проверка валидационных ошибок (например, имя занято)
+            err_text = _poll_input_errors(page, total_wait_sec=8.0, interval_sec=1.0)
+            if err_text:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                return RegistrationResult(email=email, password=password, ok=False, error=f"input_error: {err_text}")
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except PwTimeoutError:
@@ -630,6 +678,15 @@ def confirm_via_firstmail(email: str, timeout_sec: int = 180, headless: bool = F
     checks = max(1, int(max_checks))
     interval = max(0.5, float(check_interval_sec))
     for attempt in range(1, checks + 1):
+        # Проверяем отложенные ошибки формы во время ожидания письма
+        if page is not None:
+            try:
+                errs = _collect_visible_input_errors(page)
+                if errs:
+                    logger.warning(f"[confirm] Registration form error detected: {errs[0]}")
+                    return False
+            except Exception:
+                pass
         unread_only = attempt < checks  # последняя проверка может брать и прочитанные
         url = fetch_confirmation_link_from_firstmail(
             email=email,
@@ -699,12 +756,10 @@ def register_on_site_and_confirm_in_page(
             _install_cookie_watcher_js(page, interval_ms=5000)
             page.set_default_timeout(navigation_timeout_ms)
             page.goto(url)
-            logger.info("[reg] Page opened; trying to accept cookies ASAP")
             try:
                 _accept_cookies(page, timeout_ms=1500)
             except Exception:
                 pass
-            logger.info("[reg] Clicking 'unknown-player-1_cta'")
             page.locator("#unknown-player-1_cta").click()
             _ensure_registration_form(page)
             time.sleep(2.0)
@@ -739,6 +794,18 @@ def register_on_site_and_confirm_in_page(
                 lbl.click(force=True)
                 time.sleep(0.1)
             page.locator("#regform_submit").click()
+            # Быстрая проверка валидационных ошибок (например, имя занято)
+            err_text = _poll_input_errors(page, total_wait_sec=8.0, interval_sec=1.0)
+            if err_text:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                return RegistrationResult(email=email, password=password, ok=False, error=f"input_error: {err_text}")
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except PwTimeoutError:

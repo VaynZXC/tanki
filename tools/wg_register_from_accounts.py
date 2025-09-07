@@ -205,13 +205,13 @@ def main() -> None:
             if out_path.exists():
                 for e, _p in iter_accounts(out_path):
                     if isinstance(e, str) and e:
-                        already_registered_emails.add(e.strip())
+                        already_registered_emails.add(e.strip().lower())
         except Exception:
             already_registered_emails = set()
         # load all mail items and drop those that are already registered
         all_items = list(iter_mails(mails_path))
         if already_registered_emails:
-            items = [it for it in all_items if it[0] not in already_registered_emails]
+            items = [it for it in all_items if it[0].strip().lower() not in already_registered_emails]
             dropped_count = len(all_items) - len(items)
             if dropped_count > 0:
                 logger.info(f"[mails] Skipping {dropped_count} mailbox(es) already present in accounts.txt")
@@ -243,8 +243,8 @@ def main() -> None:
                             parts = s.split(":")
                         else:
                             parts = s.split()
-                        e = parts[0].strip() if parts else ""
-                        if e and e == email_to_remove:
+                        e = parts[0].strip().lower() if parts else ""
+                        if e and e == email_to_remove.strip().lower():
                             continue
                         new_lines.append(s)
                     mails_path.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
@@ -304,7 +304,7 @@ def main() -> None:
                             logger.info(f"Confirm {'OK' if ok else 'FAIL'}: {email}")
                             if not ok:
                                 with lock_out:
-                                    failed_no_mail_emails.add(email)
+                                    failed_no_mail_emails.add(email.strip().lower())
                             final_ok = ok
                         else:
                             final_ok = True
@@ -314,13 +314,15 @@ def main() -> None:
                     with lock_out:
                         with out_path.open("a", encoding="utf-8") as f:
                             f.write(f"{email}\t{password}\n")
-                        success_emails.add(email)
+                        success_emails.add(email.strip().lower())
+                    # на всякий случай повторно удалим email из mails.txt сразу после успешной верификации
+                    _remove_email_from_mails_file(email)
                 else:
                     # Если регистрация+подтверждение в одной вкладке и неуспех из-за отсутствия письма — пометим к удалению
                     try:
                         if do_in_page and isinstance(res.error, str) and res.error == "confirm_not_found":
                             with lock_out:
-                                failed_no_mail_emails.add(email)
+                                failed_no_mail_emails.add(email.strip().lower())
                     except Exception:
                         pass
             except Exception as exc:
@@ -356,7 +358,7 @@ def main() -> None:
             current_lines = []
         for ln in current_lines:
             email_in_line = _extract_email_from_line(ln)
-            if email_in_line and email_in_line in to_remove_emails:
+            if email_in_line and email_in_line.strip().lower() in to_remove_emails:
                 continue
             s = ln.strip()
             if s:
