@@ -95,9 +95,9 @@ def _open_in_same_context(page, url: str) -> bool:
     Возвращает True при успехе."""
     logger.info(f"[confirm] Navigating to confirmation URL in same context: {url}")
     try:
-        page.goto(url, timeout=130000)
+        page.goto(url, timeout=300000)
         try:
-            page.wait_for_load_state("networkidle", timeout=130000)
+            page.wait_for_load_state("networkidle", timeout=300000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -108,7 +108,7 @@ def _open_in_same_context(page, url: str) -> bool:
     try:
         page.evaluate("(u)=>{window.location.href=u}", url)
         try:
-            page.wait_for_load_state("networkidle", timeout=130000)
+            page.wait_for_load_state("networkidle", timeout=300000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -118,9 +118,9 @@ def _open_in_same_context(page, url: str) -> bool:
     # Fallback: новая вкладка в том же контексте
     try:
         new_page = page.context.new_page()
-        new_page.goto(url, timeout=130000)
+        new_page.goto(url, timeout=300000)
         try:
-            new_page.wait_for_load_state("networkidle", timeout=130000)
+            new_page.wait_for_load_state("networkidle", timeout=300000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)

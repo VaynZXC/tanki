@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ref", type=str, default="EPICWIN", help="Referral code (default: EPICWIN)")
     ap.add_argument("--confirm", action="store_true", help="Fetch email from Firstmail and confirm via link (new tab)")
     ap.add_argument("--confirm-in-page", action="store_true", help="Confirm using the same browser page (poll Firstmail and open link in-page)")
-    ap.add_argument("--confirm-wait", type=int, default=300, help="Wait seconds for confirmation email (polling)")
+    ap.add_argument("--confirm-wait", type=int, default=60, help="Wait seconds for confirmation email (polling)")
     ap.add_argument("--mailbox-pass", action="store_true", help="Use the same password from accounts.txt as mailbox password for Firstmail API")
     ap.add_argument("--firstmail-proxy", type=str, default="", help="Proxy for Firstmail API (host:port:user:pass)")
     ap.add_argument("--confirm-once", action="store_true", help="Single unread check (no polling)")
@@ -200,12 +200,30 @@ def main() -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         original_lines = mails_path.read_text(encoding="utf-8").splitlines()
         consumed_raw: list[str] = []
-        items = list(iter_mails(mails_path))
+        # emails already registered (present in accounts file)
+        already_registered_emails: set[str] = set()
+        try:
+            if out_path.exists():
+                for e, _p in iter_accounts(out_path):
+                    if isinstance(e, str) and e:
+                        already_registered_emails.add(e.strip())
+        except Exception:
+            already_registered_emails = set()
+        # load all mail items and drop those that are already registered
+        all_items = list(iter_mails(mails_path))
+        if already_registered_emails:
+            items = [it for it in all_items if it[0] not in already_registered_emails]
+            dropped_count = len(all_items) - len(items)
+            if dropped_count > 0:
+                logger.info(f"[mails] Skipping {dropped_count} mailbox(es) already present in accounts.txt")
+        else:
+            items = all_items
         if args.limit > 0:
             items = items[:args.limit]
 
         lock_out = threading.Lock()
         lock_count = threading.Lock()
+        success_emails: set[str] = set()
 
         def worker(item: tuple[str, str | None, str]) -> None:
             nonlocal processed
@@ -265,6 +283,7 @@ def main() -> None:
                         with out_path.open("a", encoding="utf-8") as f:
                             f.write(f"{email}\t{password}\n")
                         consumed_raw.append(raw_line)
+                        success_emails.add(email)
             except Exception as exc:
                 logger.warning(f"Worker error for {email}: {exc}")
             finally:
@@ -275,8 +294,29 @@ def main() -> None:
             futures = [ex.submit(worker, it) for it in items]
             for _ in as_completed(futures):
                 pass
-        # Перезаписываем mails.txt, удаляя успешно зарегистрированные
-        remaining = [ln for ln in original_lines if ln.strip() not in set(consumed_raw)]
+        # Перезаписываем mails.txt, удаляя строки с email, которые уже зарегистрированы
+        # (как ранее существовавшие в accounts.txt, так и успешно обработанные сейчас)
+        to_remove_emails = set(already_registered_emails)
+        to_remove_emails.update(success_emails)
+        def _extract_email_from_line(ln: str) -> str:
+            s = (ln or "").strip()
+            if not s:
+                return ""
+            if "\t" in s:
+                parts = s.split("\t")
+            elif ":" in s:
+                parts = s.split(":")
+            else:
+                parts = s.split()
+            return parts[0].strip() if parts else ""
+        remaining: list[str] = []
+        for ln in original_lines:
+            email_in_line = _extract_email_from_line(ln)
+            if email_in_line and email_in_line in to_remove_emails:
+                continue
+            s = ln.strip()
+            if s:
+                remaining.append(s)
         mails_path.write_text("\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
     else:
         if not src.exists():
