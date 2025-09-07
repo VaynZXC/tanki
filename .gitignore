@@ -45,6 +45,17 @@ Desktop.ini
 *.log
 logs/
 
+# Project local data (secrets and runtime outputs)
+firstmail_key.txt
+accounts.txt
+mails.txt
+accounts_final/
+vision_snaps/
+
+# Large/volatile datasets (keep curated templates, ignore raw dumps)
+dataset/raw/
+dataset/game_raw/
+
 # Playwright reports (if any)
 playwright-report/
 test-results/
