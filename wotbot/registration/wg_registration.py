@@ -198,6 +198,11 @@ def _force_fill_bonus_code(page, referral_code: str, attempts: int = 3) -> bool:
             _ensure_bonus_field_visible(page, attempts=3, pause_after_click=0.5)
         except Exception:
             pass
+        # JS-попытка открыть поле (устойчиво при нескольких потоках)
+        try:
+            _open_bonus_field_js(page)
+        except Exception:
+            pass
         # Попытка через локатор
         try:
             bonus = page.locator('#bonus-regform')
@@ -270,6 +275,40 @@ def _force_fill_bonus_code(page, referral_code: str, attempts: int = 3) -> bool:
             pass
         time.sleep(0.4)
     return False
+
+
+def _open_bonus_field_js(page) -> bool:
+    """Пытается открыть поле промокода через JS (надёжно в многопоточном режиме)."""
+    try:
+        return bool(page.evaluate(
+            """
+            () => {
+              const clickEl = (el) => { try { el.scrollIntoView({block:'center'}); el.click(); return true; } catch(e) { try { el.click(); return true; } catch(e2){} }
+                return false; };
+              const sels=[
+                'label[for="bonus-regform"]',
+                '[aria-controls="bonus-regform"]',
+                'button[aria-controls="bonus-regform"]'
+              ];
+              for(const s of sels){ const el=document.querySelector(s); if(el){ if(clickEl(el)) break; } }
+              const invites=['Invitation Code','Invite code','I have an invite code','Have an invite code','Referral code','Bonus code','Код приглашения','Пригласительный код','Промокод','Реферальный код'];
+              const body=document.body; if(body){
+                const all=body.getElementsByTagName('*');
+                for(const el of all){
+                  const t=el.textContent||''; if(invites.some(v=>t.includes(v))){ if(clickEl(el)) break; }
+                }
+              }
+              const input=document.querySelector('#bonus-regform, input[name*="bonus"], input[id*="bonus"], input[name*="promo"], input[id*="promo"], input[name*="invite"], input[id*="invite"]');
+              if(input){
+                const style=window.getComputedStyle(input);
+                return !(style && (style.display==='none' || style.visibility==='hidden'));
+              }
+              return false;
+            }
+            """
+        ))
+    except Exception:
+        return False
 
 def _install_cookie_watcher_js(page, interval_ms: int = 5000) -> None:
     """Ставит JS-таймер в странице, который каждые interval_ms кликает по баннеру.
