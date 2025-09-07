@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ref", type=str, default="EPICWIN", help="Referral code (default: EPICWIN)")
     ap.add_argument("--confirm", action="store_true", help="Fetch email from Firstmail and confirm via link (new tab)")
     ap.add_argument("--confirm-in-page", action="store_true", help="Confirm using the same browser page (poll Firstmail and open link in-page)")
-    ap.add_argument("--confirm-wait", type=int, default=60, help="Wait seconds for confirmation email (polling)")
+    ap.add_argument("--confirm-wait", type=int, default=300, help="Wait seconds for confirmation email (polling)")
     ap.add_argument("--mailbox-pass", action="store_true", help="Use the same password from accounts.txt as mailbox password for Firstmail API")
     ap.add_argument("--firstmail-proxy", type=str, default="", help="Proxy for Firstmail API (host:port:user:pass)")
     ap.add_argument("--confirm-once", action="store_true", help="Single unread check (no polling)")
@@ -198,59 +198,14 @@ def main() -> None:
     if mails_path.exists():
         out_path = src
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        # Не держим снэпшот; будем удалять строки по мере обработки и перечитывать при финальной очистке
-        # emails already registered (present in accounts file)
-        already_registered_emails: set[str] = set()
-        try:
-            if out_path.exists():
-                for e, _p in iter_accounts(out_path):
-                    if isinstance(e, str) and e:
-                        already_registered_emails.add(e.strip().lower())
-        except Exception:
-            already_registered_emails = set()
-        # load all mail items and drop those that are already registered
-        all_items = list(iter_mails(mails_path))
-        if already_registered_emails:
-            items = [it for it in all_items if it[0].strip().lower() not in already_registered_emails]
-            dropped_count = len(all_items) - len(items)
-            if dropped_count > 0:
-                logger.info(f"[mails] Skipping {dropped_count} mailbox(es) already present in accounts.txt")
-        else:
-            items = all_items
+        original_lines = mails_path.read_text(encoding="utf-8").splitlines()
+        consumed_raw: list[str] = []
+        items = list(iter_mails(mails_path))
         if args.limit > 0:
             items = items[:args.limit]
 
         lock_out = threading.Lock()
         lock_count = threading.Lock()
-        failed_no_mail_emails: set[str] = set()
-        success_emails: set[str] = set()
-
-        def _remove_email_from_mails_file(email_to_remove: str) -> None:
-            with lock_out:
-                try:
-                    if not mails_path.exists():
-                        return
-                    lines_now = mails_path.read_text(encoding="utf-8").splitlines()
-                    new_lines: list[str] = []
-                    for ln in lines_now:
-                        s = (ln or "").strip()
-                        if not s:
-                            continue
-                        # извлечём email из строки
-                        if "\t" in s:
-                            parts = s.split("\t")
-                        elif ":" in s:
-                            parts = s.split(":")
-                        else:
-                            parts = s.split()
-                        e = parts[0].strip().lower() if parts else ""
-                        if e and e == email_to_remove.strip().lower():
-                            continue
-                        new_lines.append(s)
-                    mails_path.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
-                    logger.info(f"[mails] Removed from file at start: {email_to_remove}")
-                except Exception as exc:
-                    logger.warning(f"[mails] Failed to remove {email_to_remove} from mails.txt: {exc}")
 
         def worker(item: tuple[str, str | None, str]) -> None:
             nonlocal processed
@@ -258,8 +213,6 @@ def main() -> None:
             if not mailbox_pwd:
                 logger.warning(f"No mailbox password for {email} in mails file — skipping")
                 return
-            # Удаляем текущую строку из mails.txt сразу, чтобы при переходе к следующей она не осталась
-            _remove_email_from_mails_file(email)
             password = mailbox_pwd
             local_part = email.split("@", 1)[0]
             suffix = "".join(random.choice(string.ascii_lowercase) for _ in range(6))
@@ -300,11 +253,8 @@ def main() -> None:
                         logger.warning(f"FAIL: {email} | {res.error}")
                     else:
                         if do_confirm:
-                            ok = confirm_via_firstmail(email, timeout_sec=args.confirm_wait, headless=args.headless, mailbox_password=password, firstmail_proxy=fm_proxy_raw, max_checks=(1 if args.confirm_once else 3))
+                            ok = confirm_via_firstmail(email, timeout_sec=args.confirm_wait, headless=args.headless, mailbox_password=password, firstmail_proxy=fm_proxy_raw)
                             logger.info(f"Confirm {'OK' if ok else 'FAIL'}: {email}")
-                            if not ok:
-                                with lock_out:
-                                    failed_no_mail_emails.add(email.strip().lower())
                             final_ok = ok
                         else:
                             final_ok = True
@@ -314,17 +264,7 @@ def main() -> None:
                     with lock_out:
                         with out_path.open("a", encoding="utf-8") as f:
                             f.write(f"{email}\t{password}\n")
-                        success_emails.add(email.strip().lower())
-                    # на всякий случай повторно удалим email из mails.txt сразу после успешной верификации
-                    _remove_email_from_mails_file(email)
-                else:
-                    # Если регистрация+подтверждение в одной вкладке и неуспех из-за отсутствия письма — пометим к удалению
-                    try:
-                        if do_in_page and isinstance(res.error, str) and res.error == "confirm_not_found":
-                            with lock_out:
-                                failed_no_mail_emails.add(email.strip().lower())
-                    except Exception:
-                        pass
+                        consumed_raw.append(raw_line)
             except Exception as exc:
                 logger.warning(f"Worker error for {email}: {exc}")
             finally:
@@ -335,34 +275,8 @@ def main() -> None:
             futures = [ex.submit(worker, it) for it in items]
             for _ in as_completed(futures):
                 pass
-        # Перезаписываем mails.txt, удаляя строки с email, которые уже зарегистрированы
-        # (как ранее существовавшие в accounts.txt, так и успешно обработанные сейчас/удалённые на старте)
-        to_remove_emails = set(already_registered_emails)
-        to_remove_emails.update(success_emails)
-        to_remove_emails.update(failed_no_mail_emails)
-        def _extract_email_from_line(ln: str) -> str:
-            s = (ln or "").strip()
-            if not s:
-                return ""
-            if "\t" in s:
-                parts = s.split("\t")
-            elif ":" in s:
-                parts = s.split(":")
-            else:
-                parts = s.split()
-            return parts[0].strip() if parts else ""
-        remaining: list[str] = []
-        try:
-            current_lines = mails_path.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            current_lines = []
-        for ln in current_lines:
-            email_in_line = _extract_email_from_line(ln)
-            if email_in_line and email_in_line.strip().lower() in to_remove_emails:
-                continue
-            s = ln.strip()
-            if s:
-                remaining.append(s)
+        # Перезаписываем mails.txt, удаляя успешно зарегистрированные
+        remaining = [ln for ln in original_lines if ln.strip() not in set(consumed_raw)]
         mails_path.write_text("\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
     else:
         if not src.exists():
@@ -447,5 +361,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 

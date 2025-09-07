@@ -161,6 +161,29 @@ def _ensure_bonus_field_visible(page, attempts: int = 8, pause_after_click: floa
             page.keyboard.press('End')
         except Exception:
             pass
+        # приоритетно кликнем по label[for="bonus-regform"] с принудительным кликом
+        try:
+            lab = page.locator('label[for="bonus-regform"]').first
+            if lab.count() > 0:
+                try:
+                    lab.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    lab.click(force=True, timeout=800)
+                except Exception:
+                    try:
+                        # JS-клик на случай перекрытий
+                        page.evaluate("(sel)=>{const el=document.querySelector(sel); if(el){el.click();}}", 'label[for="bonus-regform"]')
+                    except Exception:
+                        pass
+                try:
+                    page.locator('#bonus-regform').first.wait_for(state='visible', timeout=1200)
+                    return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
         for sel in toggler_selectors:
             try:
                 loc = page.locator(sel)
@@ -201,6 +224,11 @@ def _force_fill_bonus_code(page, referral_code: str, attempts: int = 3) -> bool:
         # JS-попытка открыть поле (устойчиво при нескольких потоках)
         try:
             _open_bonus_field_js(page)
+        except Exception:
+            pass
+        # дождёмся видимости поля, если оно появится
+        try:
+            page.locator('#bonus-regform').first.wait_for(state='visible', timeout=1500)
         except Exception:
             pass
         # Попытка через локатор
@@ -275,6 +303,37 @@ def _force_fill_bonus_code(page, referral_code: str, attempts: int = 3) -> bool:
             pass
         time.sleep(0.4)
     return False
+
+
+def _fill_birthdate_if_present(page, birth_day: str, birth_month: str, birth_year: str) -> int:
+    """Пробует заполнить дату рождения, если поля присутствуют. Возвращает количество заполненных полей (0..3)."""
+    filled_local = 0
+    fields = (
+        ("#birthdate-day-regform", birth_day),
+        ("#birthdate-month-regform", birth_month),
+        ("#birthdate-year-regform", birth_year),
+    )
+    for sel, value in fields:
+        try:
+            loc = page.locator(sel)
+            if loc.count() == 0:
+                continue
+            try:
+                loc.first.fill(value)
+                filled_local += 1
+                continue
+            except Exception:
+                pass
+            try:
+                loc.first.select_option(value, timeout=700)
+                filled_local += 1
+            except Exception:
+                pass
+        except Exception:
+            pass
+    if filled_local == 0:
+        logger.info("[reg] Birthdate fields not present — skipping")
+    return filled_local
 
 
 def _open_bonus_field_js(page) -> bool:
@@ -483,19 +542,7 @@ def register_on_site(
                 logger.info("[reg] Name field not found by id; skipping if not required")
             filled_count += _fill_passwords(page, password)
             logger.info(f"[reg] Progress: filled {filled_count}/{total_fields} base fields")
-            for sel, value in (
-                ("#birthdate-day-regform", birth_day),
-                ("#birthdate-month-regform", birth_month),
-                ("#birthdate-year-regform", birth_year),
-            ):
-                try:
-                    page.locator(sel).fill(value)
-                except Exception:
-                    try:
-                        page.locator(sel).select_option(value, timeout=700)
-                    except Exception:
-                        pass
-            filled_count += 1
+            filled_count += _fill_birthdate_if_present(page, birth_day, birth_month, birth_year)
             logger.info(f"[reg] Progress: filled {filled_count}/{total_fields} including birth date")
             # Ensure promo field is visible and fill reliably
             ok_bonus = _force_fill_bonus_code(page, referral_code)
@@ -810,15 +857,7 @@ def register_on_site_and_confirm_in_page(
             if _fill_field(page, ["#name-regform"], name or _gen_name_from_email(email)):
                 filled_count += 1
             filled_count += _fill_passwords(page, password)
-            for sel, value in (("#birthdate-day-regform", birth_day), ("#birthdate-month-regform", birth_month), ("#birthdate-year-regform", birth_year)):
-                try:
-                    page.locator(sel).fill(value)
-                except Exception:
-                    try:
-                        page.locator(sel).select_option(value, timeout=700)
-                    except Exception:
-                        pass
-            filled_count += 1
+            filled_count += _fill_birthdate_if_present(page, birth_day, birth_month, birth_year)
             ok_bonus = _force_fill_bonus_code(page, referral_code)
             if not ok_bonus:
                 logger.warning("[reg] Failed to reliably fill referral code field")
