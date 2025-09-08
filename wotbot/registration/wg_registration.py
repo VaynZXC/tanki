@@ -95,9 +95,9 @@ def _open_in_same_context(page, url: str) -> bool:
     Возвращает True при успехе."""
     logger.info(f"[confirm] Navigating to confirmation URL in same context: {url}")
     try:
-        page.goto(url, timeout=300000)
+        page.goto(url, timeout=180000)
         try:
-            page.wait_for_load_state("networkidle", timeout=300000)
+            page.wait_for_load_state("networkidle", timeout=180000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -108,7 +108,7 @@ def _open_in_same_context(page, url: str) -> bool:
     try:
         page.evaluate("(u)=>{window.location.href=u}", url)
         try:
-            page.wait_for_load_state("networkidle", timeout=300000)
+            page.wait_for_load_state("networkidle", timeout=180000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -118,9 +118,9 @@ def _open_in_same_context(page, url: str) -> bool:
     # Fallback: новая вкладка в том же контексте
     try:
         new_page = page.context.new_page()
-        new_page.goto(url, timeout=300000)
+        new_page.goto(url, timeout=180000)
         try:
-            new_page.wait_for_load_state("networkidle", timeout=300000)
+            new_page.wait_for_load_state("networkidle", timeout=180000)
         except PwTimeoutError:
             pass
         time.sleep(5.0)
@@ -129,7 +129,7 @@ def _open_in_same_context(page, url: str) -> bool:
         logger.warning(f"[confirm] New page navigation failed: {exc}")
         return False
 
-def _ensure_bonus_field_visible(page, attempts: int = 8, pause_after_click: float = 0.5) -> bool:
+def _ensure_bonus_field_visible(page, attempts: int = 8, pause_after_click: float = 1.0) -> bool:
     """Открывает поле промокода, если оно скрыто. Возвращает True, если поле видно."""
     toggler_selectors = [
         'label[for="bonus-regform"]',
@@ -177,6 +177,11 @@ def _ensure_bonus_field_visible(page, attempts: int = 8, pause_after_click: floa
                         page.evaluate("(sel)=>{const el=document.querySelector(sel); if(el){el.click();}}", 'label[for="bonus-regform"]')
                     except Exception:
                         pass
+                # небольшая задержка, чтобы не переоткрыть поле повторным кликом
+                try:
+                    time.sleep(pause_after_click)
+                except Exception:
+                    pass
                 try:
                     page.locator('#bonus-regform').first.wait_for(state='visible', timeout=1200)
                     return True
@@ -218,12 +223,9 @@ def _force_fill_bonus_code(page, referral_code: str, attempts: int = 3) -> bool:
     """Надёжно вводит промокод в поле, с проверкой значения и JS-фолбэками."""
     for _ in range(max(1, attempts)):
         try:
-            _ensure_bonus_field_visible(page, attempts=3, pause_after_click=0.5)
-        except Exception:
-            pass
-        # JS-попытка открыть поле (устойчиво при нескольких потоках)
-        try:
-            _open_bonus_field_js(page)
+            # Самая надёжная последовательность: многократные попытки открыть поле
+            if not _try_open_bonus_field(page, attempts=4, wait_after_ms=1000):
+                _ensure_bonus_field_visible(page, attempts=3, pause_after_click=1.0)
         except Exception:
             pass
         # дождёмся видимости поля, если оно появится
@@ -332,7 +334,8 @@ def _fill_birthdate_if_present(page, birth_day: str, birth_month: str, birth_yea
         except Exception:
             pass
     if filled_local == 0:
-        logger.info("[reg] Birthdate fields not present — skipping")
+        pass
+        #logger.info("[reg] Birthdate fields not present — skipping")
     return filled_local
 
 
@@ -368,6 +371,103 @@ def _open_bonus_field_js(page) -> bool:
         ))
     except Exception:
         return False
+
+
+def _try_open_bonus_field(page, attempts: int = 6, wait_after_ms: int = 1000) -> bool:
+    """Открывает поле промокода «клик → пауза → проверка», максимум один клик за итерацию."""
+    wait_s = max(0.2, wait_after_ms / 1000.0)
+    texts = ('Pozvánkový kód','Invitation Code','Invite code','I have an invite code','Have an invite code','Referral code','Bonus code','Код приглашения','Пригласительный код','Промокод','Реферальный код')
+    for _ in range(max(1, attempts)):
+        # уже видно?
+        try:
+            if page.locator('#bonus-regform').is_visible():
+                return True
+        except Exception:
+            pass
+        clicked = False
+        # 1) label
+        try:
+            lab = page.locator('label[for="bonus-regform"]').first
+            if lab.count() > 0:
+                try:
+                    lab.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    lab.click(timeout=500)
+                except Exception:
+                    try:
+                        lab.click(force=True, timeout=500)
+                    except Exception:
+                        pass
+                clicked = True
+        except Exception:
+            pass
+        # 2) aria-controls (если ещё не кликали)
+        if not clicked:
+            for sel in ('[aria-controls="bonus-regform"]','button[aria-controls="bonus-regform"]'):
+                try:
+                    loc = page.locator(sel).first
+                    if loc.count() > 0:
+                        try:
+                            loc.scroll_into_view_if_needed()
+                        except Exception:
+                            pass
+                        try:
+                            loc.click(timeout=500)
+                        except Exception:
+                            try:
+                                loc.click(force=True, timeout=500)
+                            except Exception:
+                                pass
+                        clicked = True
+                        break
+                except Exception:
+                    pass
+        # 3) текстовая кнопка (если ещё не кликали)
+        if not clicked:
+            for txt in texts:
+                try:
+                    tloc = page.get_by_text(txt, exact=False).first
+                    if tloc.count() > 0:
+                        try:
+                            tloc.scroll_into_view_if_needed()
+                        except Exception:
+                            pass
+                        try:
+                            tloc.click(timeout=500)
+                        except Exception:
+                            try:
+                                tloc.click(force=True, timeout=500)
+                            except Exception:
+                                pass
+                        clicked = True
+                        break
+                except Exception:
+                    pass
+        # 4) JS fallback (если вообще ничего не кликнули)
+        if not clicked:
+            try:
+                page.evaluate("(sel)=>{const el=document.querySelector(sel); if(el){el.click();}}", 'label[for="bonus-regform"]')
+                clicked = True
+            except Exception:
+                pass
+        # ожидание и проверка
+        try:
+            time.sleep(wait_s)
+        except Exception:
+            pass
+        try:
+            if page.locator('#bonus-regform').is_visible():
+                return True
+        except Exception:
+            pass
+        # если не видно — новая итерация; без дополнительных кликов в этой итерации
+        try:
+            page.keyboard.press('End')
+        except Exception:
+            pass
+    return False
 
 def _install_cookie_watcher_js(page, interval_ms: int = 5000) -> None:
     """Ставит JS-таймер в странице, который каждые interval_ms кликает по баннеру.
@@ -800,9 +900,9 @@ def confirm_via_firstmail(email: str, timeout_sec: int = 180, headless: bool = F
                 browser = p.chromium.launch(headless=headless)
                 context = browser.new_context()
                 pg = context.new_page()
-                pg.goto(url)
+                pg.goto(url, timeout=180000)
                 try:
-                    pg.wait_for_load_state("networkidle", timeout=10000)
+                    pg.wait_for_load_state("networkidle", timeout=180000)
                 except PwTimeoutError:
                     pass
                 time.sleep(5.0)

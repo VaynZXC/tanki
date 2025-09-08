@@ -198,14 +198,40 @@ def main() -> None:
     if mails_path.exists():
         out_path = src
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        # читаем текущие строки (для финальной чистки перечитаем ещё раз)
         original_lines = mails_path.read_text(encoding="utf-8").splitlines()
-        consumed_raw: list[str] = []
         items = list(iter_mails(mails_path))
         if args.limit > 0:
             items = items[:args.limit]
 
         lock_out = threading.Lock()
         lock_count = threading.Lock()
+        
+        def _remove_email_from_mails_file(email_to_remove: str) -> None:
+            with lock_out:
+                try:
+                    if not mails_path.exists():
+                        return
+                    lines_now = mails_path.read_text(encoding="utf-8").splitlines()
+                    new_lines: list[str] = []
+                    for ln in lines_now:
+                        s = (ln or "").strip()
+                        if not s:
+                            continue
+                        if "\t" in s:
+                            parts = s.split("\t")
+                        elif ":" in s:
+                            parts = s.split(":")
+                        else:
+                            parts = s.split()
+                        e = parts[0].strip().lower() if parts else ""
+                        if e and e == email_to_remove.strip().lower():
+                            continue
+                        new_lines.append(s)
+                    mails_path.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
+                    logger.info(f"[mails] Removed from file at start: {email_to_remove}")
+                except Exception as exc:
+                    logger.warning(f"[mails] Failed to remove {email_to_remove} from mails.txt: {exc}")
 
         def worker(item: tuple[str, str | None, str]) -> None:
             nonlocal processed
@@ -213,6 +239,8 @@ def main() -> None:
             if not mailbox_pwd:
                 logger.warning(f"No mailbox password for {email} in mails file — skipping")
                 return
+            # сразу удаляем email из mails.txt, чтобы не обрабатывался повторно
+            _remove_email_from_mails_file(email)
             password = mailbox_pwd
             local_part = email.split("@", 1)[0]
             suffix = "".join(random.choice(string.ascii_lowercase) for _ in range(6))
@@ -264,7 +292,8 @@ def main() -> None:
                     with lock_out:
                         with out_path.open("a", encoding="utf-8") as f:
                             f.write(f"{email}\t{password}\n")
-                        consumed_raw.append(raw_line)
+                    # на всякий случай повторно удалим email (если вдруг снова попал в файл)
+                    _remove_email_from_mails_file(email)
             except Exception as exc:
                 logger.warning(f"Worker error for {email}: {exc}")
             finally:
