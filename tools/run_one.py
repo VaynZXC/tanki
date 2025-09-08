@@ -39,7 +39,7 @@ def main() -> None:
 
     # Import heavy modules after layout setup
     from wotbot.vision.state_classifier import PHashStateClassifier
-    from wotbot.launcher.login_flow import login_once
+    from wotbot.launcher.login_flow import login_once, LoginInvalidError
     import subprocess
 
     try:
@@ -51,13 +51,27 @@ def main() -> None:
         sys.exit(1)
 
     creds = Credentials(email=args.email, password=args.password)
-    try:
-        ok = login_once(dataset_root, creds)
-    except Exception as exc:
-        logger.exception(f"Login flow exception: {exc}")
-        ok = False
+    # Повторы логина: до 3 попыток, если что-то пошло не так
+    ok = False
+    invalid_creds = False
+    for attempt in range(1, 4):
+        try:
+            logger.info(f"Login attempt {attempt}/3")
+            ok = login_once(dataset_root, creds)
+        except LoginInvalidError as exc:
+            logger.error(f"Invalid credentials: {exc}")
+            invalid_creds = True
+            ok = False
+            break
+        except Exception as exc:
+            logger.exception(f"Login flow exception (attempt {attempt}): {exc}")
+            ok = False
+        if ok:
+            break
+        time.sleep(1.0)
     if not ok:
-        sys.exit(1)
+        # 3 = special code for invalid credentials (skip retries in run_all)
+        sys.exit(3 if invalid_creds else 1)
 
     # Give the game a moment to spawn the window
     time.sleep(5.0)

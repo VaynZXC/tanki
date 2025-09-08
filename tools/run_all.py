@@ -121,7 +121,18 @@ def main() -> None:
         if args.vision_snapshots:
             cmd += ["--vision-snapshots", "--vision-snap-interval", str(args.vision_snap_interval)]
         logger.info(f"Запуск отдельного процесса для {creds.email}")
-        rc = subprocess.run(cmd, capture_output=False).returncode
+        # Повторы полного цикла (логин+игра) на случай сбоя запуска игры
+        # Особый код 3 = невалидные учётные данные, попытки не повторяем
+        rc = 1
+        for attempt in range(1, 3):
+            logger.info(f"Run-one attempt {attempt}/2 for {creds.email}")
+            rc = subprocess.run(cmd, capture_output=False).returncode
+            if rc == 0:
+                break
+            if rc == 3:
+                logger.warning(f"Invalid credentials for {creds.email} — skipping further attempts")
+                break
+            time.sleep(1.0)
         if rc == 0:
             logger.info(f"SUCCESS {creds.email}. Добавляю в accounts_final")
             # read result tanks and choose file name

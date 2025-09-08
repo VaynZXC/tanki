@@ -689,6 +689,9 @@ def main() -> None:
                 elif state == 'game_loading':
                     # установить курсор в точку якоря скролла (как перед прокруткой)
                     _move_to_scroll_anchor()
+                elif state == 'game_nagrada_screen3':
+                    # аналогично: переместим курсор в якорную позицию для последующих скроллов
+                    _move_to_scroll_anchor()
                 # после восстановления — переходим к следующей итерации цикла
                 time.sleep(0.2)
                 continue

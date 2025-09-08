@@ -56,6 +56,11 @@ CONTINUE_TEMPLATE = Path("dataset/templates/continue.png")
 EMAIL_TEMPLATE = Path("dataset/templates/email.png")
 PASSWORD_TEMPLATE = Path("dataset/templates/password.png")
 LOGIN_BTN_TEMPLATE = Path("dataset/templates/login_btn.png")
+LOGIN_ERROR_TEMPLATE = Path("dataset/templates/login_error.png")
+class LoginInvalidError(Exception):
+    """Raised when login credentials are invalid (explicit UI error detected)."""
+    pass
+
 
 
 try:
@@ -369,6 +374,7 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
         return False
 
     # 1) ждём главное меню
+    saw_main = False
     for _ in range(10):
         img = _grab_launcher_image()
         if img is None:
@@ -377,8 +383,30 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
         match = clf.classify(img)
         if match and match.state == "main_menu":
             logger.info(f"Состояние: main_menu (dist={match.distance})")
+            saw_main = True
             break
         time.sleep(0.2)
+    if not saw_main:
+        logger.warning("Главное меню лаунчера не найдено — пробую клик по аватару и повторную проверку")
+        try:
+            _click_relative(*AVATAR_RXY)
+            time.sleep(1.0)
+        except Exception:
+            pass
+        for _ in range(8):
+            img = _grab_launcher_image()
+            if img is None:
+                time.sleep(0.2)
+                continue
+            match = clf.classify(img)
+            if match and match.state == "main_menu":
+                logger.info("Главное меню найдено после клика по аватару")
+                saw_main = True
+                break
+            time.sleep(0.2)
+        if not saw_main:
+            logger.error("Главное меню лаунчера не найдено — перезапуск входа")
+            return False
 
     # 2) нажать аватар
     _click_relative(*AVATAR_RXY)
@@ -434,6 +462,17 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
                 logger.warning("Шаблон login_btn.png не найден — кликаю по относительной точке")
                 _click_relative(0.55, 0.44)
                 time.sleep(STEP_DELAY)
+
+            # Быстрая проверка ошибки логина (неверные данные)
+            if LOGIN_ERROR_TEMPLATE.exists():
+                for _ in range(10):
+                    pos_err = locate_template_on_launcher(LOGIN_ERROR_TEMPLATE, panel="any", confidence=0.86)
+                    if not pos_err:
+                        pos_err = locate_template_on_launcher(LOGIN_ERROR_TEMPLATE, panel="any", confidence=0.80, grayscale=True)
+                    if pos_err:
+                        logger.error("Ошибка логина: обнаружен индикатор login_error.png — пропускаю аккаунт")
+                        raise LoginInvalidError("Invalid credentials detected by login_error.png")
+                    time.sleep(0.2)
             made_progress = True
             break
 
@@ -539,7 +578,24 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
         time.sleep(STEP_DELAY)
     else:
         _click_relative(*PLAY_BTN_RXY)
-    return True
+    # 6) убедиться, что окно игры действительно появилось
+    try:
+        from wotbot.config import load_game_config
+        from wotbot.win.window_finder import find_game_hwnd_by_titles
+        cfg_g = load_game_config()
+        t0 = time.time()
+        while time.time() - t0 < 30.0:
+            hwnd_game = find_game_hwnd_by_titles(cfg_g.window_title_patterns)
+            if hwnd_game:
+                logger.info("Окно игры обнаружено после клика 'Играть'")
+                return True
+            time.sleep(0.5)
+        logger.error("Игра не запустилась: окно клиента не найдено в отведённое время")
+        return False
+    except Exception as exc:
+        logger.warning(f"Проверка окна игры не удалась: {exc}")
+        # В сомнительном состоянии лучше вернуть False, чтобы перезапустить попытку
+        return False
 
 
 def run_for_all_accounts(dataset_root: Path, accounts_path: Path) -> None:
