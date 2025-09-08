@@ -38,6 +38,8 @@ import psutil
 
 
 THINK_DELAY = 0.4
+# Сколько раз подряд нужно увидеть одну сцену, чтобы считать, что зависли
+STUCK_THRESHOLD = 10
 # Allowed scene sets by phase
 PHASE_PRE_ALLOWED = {"game_loading", "game_cutscena", "game_tutorial1"}
 PHASE_TUTORIAL_ALLOWED = {"game_tutorial1", "game_tutorial2", "game_tutorial_menu", "game_tutorial_menu_conf"}
@@ -207,7 +209,45 @@ def _locate_icon(icon: Path) -> tuple[int, int] | None:
     pos = locate_template_on_game(icon, confidence=0.86)
     if not pos:
         pos = locate_template_on_game(icon, confidence=0.82, grayscale=True)
+    # Фолбэк: обрезанная версия, если перекрывает описание
+    if not pos:
+        try:
+            obrez = icon.with_name(f"{icon.stem}_obrez{icon.suffix}")
+            if obrez.exists():
+                pos = locate_template_on_game(obrez, confidence=0.86)
+                if not pos:
+                    pos = locate_template_on_game(obrez, confidence=0.82, grayscale=True)
+        except Exception:
+            pass
     return pos
+
+
+def _is_tank_selected(templates_dir: Path, tank_id: str) -> bool:
+    """Проверяем маркер выбранного танка: <tank>_v.png"""
+    try:
+        sel = templates_dir / f"{tank_id}_v.png"
+        if not sel.exists():
+            return False
+        pos = locate_template_on_game(sel, confidence=0.86)
+        if not pos:
+            pos = locate_template_on_game(sel, confidence=0.82, grayscale=True)
+        return pos is not None
+    except Exception:
+        return False
+
+
+def _click_tank_icon_by_id(templates_dir: Path, tank_id: str) -> bool:
+    """Кликаем по иконке танка (учитывая *_obrez)."""
+    try:
+        icon = templates_dir / f"{tank_id}.png"
+        pos = _locate_icon(icon)
+        if not pos:
+            return False
+        x, y = pos
+        _click_many(x, y, times=2, interval=0.06)
+        return True
+    except Exception:
+        return False
 
 
 def _find_and_click_tank_by_memory(tank_id: str, icon: Path, max_steps: int = 30, step_units: int = 200) -> tuple[bool, int]:
@@ -511,6 +551,9 @@ def main() -> None:
     stop_requested = False
     user_paused = False
     chosen_tanks: list[str] = []
+    # детектор зависаний
+    last_state_seen: str | None = None
+    state_repeat_count: int = 0
     if _HAVE_KBD and not args.no_hotkeys:
         try:
             keyboard.add_hotkey(args.hotkey_stop, lambda: globals().update() or None)
@@ -605,6 +648,50 @@ def main() -> None:
                 logger.debug(f"Filtered by phase(tutorial): {state}")
                 continue
             logger.info(f"Scene[{phase}]: {state} (dist={match.distance})")
+
+            # ======= STUCK DETECTION =======
+            if state == last_state_seen:
+                state_repeat_count += 1
+            else:
+                last_state_seen = state
+                state_repeat_count = 1
+
+            if state_repeat_count >= STUCK_THRESHOLD:
+                logger.warning(f"Stuck detected on '{state}' (seen {state_repeat_count}x) -> recovery")
+                # Сбросим счётчик, чтобы не зациклиться при том же кадре
+                state_repeat_count = 0
+                # Восстановительные действия по сценам
+                if state == 'game_tutorial1':
+                    _press_game_key(win32con.VK_RETURN)
+                    time.sleep(0.2)
+                elif state == 'game_cutscena':
+                    _press_game_key(win32con.VK_ESCAPE)
+                    time.sleep(0.2)
+                elif state == 'game_vibor_tanka':
+                    # 1) Если танк уже выбран — подтверждаем Enter
+                    if _is_tank_selected(templates_dir, 'is7') or _is_tank_selected(templates_dir, 'fv4005'):
+                        _press_game_key(win32con.VK_RETURN)
+                        time.sleep(0.2)
+                    else:
+                        # 2) Иначе кликаем по иконке: сначала тот, что ожидается стадией, потом другой
+                        preferred_first = 'is7'
+                        if phase == 'post' and post_stage >= 40:
+                            preferred_first = 'fv4005'
+                        order = [preferred_first, 'fv4005' if preferred_first == 'is7' else 'is7']
+                        clicked = False
+                        for tank_id in order:
+                            if _click_tank_icon_by_id(templates_dir, tank_id):
+                                clicked = True
+                                break
+                        # если всё ещё не получилось — мягкий Enter как фолбэк
+                        if not clicked:
+                            _press_game_key(win32con.VK_RETURN)
+                elif state == 'game_loading':
+                    # установить курсор в точку якоря скролла (как перед прокруткой)
+                    _move_to_scroll_anchor()
+                # после восстановления — переходим к следующей итерации цикла
+                time.sleep(0.2)
+                continue
 
         if state in {"game_loading"}:
             # после прохождения game_tutorial1 блокируем game_loading
@@ -701,25 +788,39 @@ def main() -> None:
                     time.sleep(0.2)
                     continue
 
-            # Stage 1: первый экран наград — Enter (двойное нажатие + запасной + ESC)
+            # Stage 1: первый экран наград — жмём Enter, но переходим на stage 2 только когда видим game_vibor_tanka
             if post_stage == 1:
+                m = clf.classify(img)
+                if m and m.state == 'game_vibor_tanka':
+                    post_stage = 2
+                    continue
                 logger.info("Post: reward screen1 -> press Enter x2")
                 _press_game_key(win32con.VK_RETURN)
                 time.sleep(0.15)
                 _press_game_key(win32con.VK_RETURN)
                 time.sleep(0.2)
-                # если по-прежнему не ушли с ролика — ещё один Enter
-                m = clf.classify(img)
+                # если по-прежнему не ушли с ролика — ещё один Enter/ESC как фолбэк
                 if m and m.state == 'game_video':
                     _press_game_key(win32con.VK_RETURN)
                     time.sleep(0.1)
                     _press_game_key(win32con.VK_ESCAPE)
                 time.sleep(0.2)
-                post_stage = 2
+                # остаёмся на stage 1 до смены сцены
                 continue
 
             # Stage 2: выбрать танк is7 (фиксированные шаги 200px + память)
             if post_stage == 2:
+                m = clf.classify(img)
+                # защита: если всё ещё на game_nagrada_screen1 — вернуться на stage 1 и снова жать Enter
+                if m and m.state == 'game_nagrada_screen1':
+                    _press_game_key(win32con.VK_RETURN)
+                    time.sleep(0.15)
+                    _press_game_key(win32con.VK_RETURN)
+                    post_stage = 1
+                    continue
+                # продолжаем только на экране выбора танка
+                if not (m and m.state == 'game_vibor_tanka'):
+                    continue
                 tank_icon = templates_dir / 'is7.png'
                 ok, _ = _find_and_click_tank_by_memory('is7', tank_icon, max_steps=60, step_units=200)
                 if not ok:

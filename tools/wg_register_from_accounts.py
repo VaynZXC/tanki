@@ -206,6 +206,8 @@ def main() -> None:
 
         lock_out = threading.Lock()
         lock_count = threading.Lock()
+        lock_consumed = threading.Lock()
+        consumed_raw: list[str] = []
         
         def _remove_email_from_mails_file(email_to_remove: str) -> None:
             with lock_out:
@@ -294,6 +296,9 @@ def main() -> None:
                             f.write(f"{email}\t{password}\n")
                     # на всякий случай повторно удалим email (если вдруг снова попал в файл)
                     _remove_email_from_mails_file(email)
+                    # отметим исходную строку из mails.txt как успешно потреблённую
+                    with lock_consumed:
+                        consumed_raw.append(raw_line.strip())
             except Exception as exc:
                 logger.warning(f"Worker error for {email}: {exc}")
             finally:
