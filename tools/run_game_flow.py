@@ -668,6 +668,8 @@ def main() -> None:
                     _press_game_key(win32con.VK_ESCAPE)
                     time.sleep(0.2)
                 elif state == 'game_vibor_tanka':
+                    # установить курсор в точку якоря скролла (как перед прокруткой)
+                    _move_to_scroll_anchor()
                     # 1) Если танк уже выбран — подтверждаем Enter
                     if _is_tank_selected(templates_dir, 'is7') or _is_tank_selected(templates_dir, 'fv4005'):
                         _press_game_key(win32con.VK_RETURN)
@@ -692,6 +694,10 @@ def main() -> None:
                 elif state == 'game_nagrada_screen3':
                     # аналогично: переместим курсор в якорную позицию для последующих скроллов
                     _move_to_scroll_anchor()
+                elif state == 'game_video':
+                    # скип ролика
+                    _press_game_key(win32con.VK_ESCAPE)
+                    time.sleep(0.2)
                 # после восстановления — переходим к следующей итерации цикла
                 time.sleep(0.2)
                 continue

@@ -61,6 +61,10 @@ class LoginInvalidError(Exception):
     """Raised when login credentials are invalid (explicit UI error detected)."""
     pass
 
+class GameStartTimeoutError(Exception):
+    """Raised when the game client window did not appear within the expected time."""
+    pass
+
 
 
 try:
@@ -591,7 +595,7 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
                 return True
             time.sleep(0.5)
         logger.error("Игра не запустилась: окно клиента не найдено в отведённое время")
-        return False
+        raise GameStartTimeoutError("Game window did not appear in time")
     except Exception as exc:
         logger.warning(f"Проверка окна игры не удалась: {exc}")
         # В сомнительном состоянии лучше вернуть False, чтобы перезапустить попытку

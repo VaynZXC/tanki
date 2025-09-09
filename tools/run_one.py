@@ -39,7 +39,7 @@ def main() -> None:
 
     # Import heavy modules after layout setup
     from wotbot.vision.state_classifier import PHashStateClassifier
-    from wotbot.launcher.login_flow import login_once, LoginInvalidError
+    from wotbot.launcher.login_flow import login_once, LoginInvalidError, GameStartTimeoutError
     import subprocess
 
     try:
@@ -61,6 +61,10 @@ def main() -> None:
         except LoginInvalidError as exc:
             logger.error(f"Invalid credentials: {exc}")
             invalid_creds = True
+            ok = False
+            break
+        except GameStartTimeoutError as exc:
+            logger.error(f"Game start timeout: {exc}")
             ok = False
             break
         except Exception as exc:

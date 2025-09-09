@@ -122,15 +122,18 @@ def main() -> None:
             cmd += ["--vision-snapshots", "--vision-snap-interval", str(args.vision_snap_interval)]
         logger.info(f"Запуск отдельного процесса для {creds.email}")
         # Повторы полного цикла (логин+игра) на случай сбоя запуска игры
-        # Особый код 3 = невалидные учётные данные, попытки не повторяем
+        # Особые коды:
+        # 3 = невалидные учётные данные — попытки не повторяем
+        # 4 = таймаут запуска игры — попытки не повторяем
         rc = 1
         for attempt in range(1, 3):
             logger.info(f"Run-one attempt {attempt}/2 for {creds.email}")
             rc = subprocess.run(cmd, capture_output=False).returncode
             if rc == 0:
                 break
-            if rc == 3:
-                logger.warning(f"Invalid credentials for {creds.email} — skipping further attempts")
+            if rc in (3, 4):
+                reason = "invalid credentials" if rc == 3 else "game start timeout"
+                logger.warning(f"{reason} for {creds.email} — skipping further attempts")
                 break
             time.sleep(1.0)
         if rc == 0:
