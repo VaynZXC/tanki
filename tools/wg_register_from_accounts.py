@@ -89,6 +89,7 @@ def main() -> None:
     proxy_file = Path(args.proxy_file) if args.proxy_file else None
 
     processed = 0
+    failed_count = 0
 
     # Respect target_total: count already existing accounts and stop when reached
     try:
@@ -207,6 +208,7 @@ def main() -> None:
         lock_out = threading.Lock()
         lock_count = threading.Lock()
         lock_consumed = threading.Lock()
+        lock_failed = threading.Lock()
         consumed_raw: list[str] = []
         
         def _remove_email_from_mails_file(email_to_remove: str) -> None:
@@ -236,7 +238,7 @@ def main() -> None:
                     logger.warning(f"[mails] Failed to remove {email_to_remove} from mails.txt: {exc}")
 
         def worker(item: tuple[str, str | None, str]) -> None:
-            nonlocal processed
+            nonlocal processed, failed_count
             email, mailbox_pwd, raw_line = item
             if not mailbox_pwd:
                 logger.warning(f"No mailbox password for {email} in mails file — skipping")
@@ -281,6 +283,8 @@ def main() -> None:
                     )
                     if not res.ok:
                         logger.warning(f"FAIL: {email} | {res.error}")
+                        with lock_failed:
+                            failed_count += 1
                     else:
                         if do_confirm:
                             ok = confirm_via_firstmail(email, timeout_sec=args.confirm_wait, headless=args.headless, mailbox_password=password, firstmail_proxy=fm_proxy_raw)
@@ -299,16 +303,25 @@ def main() -> None:
                     # отметим исходную строку из mails.txt как успешно потреблённую
                     with lock_consumed:
                         consumed_raw.append(raw_line.strip())
+                else:
+                    with lock_failed:
+                        failed_count += 1
             except Exception as exc:
-                logger.warning(f"Worker error for {email}: {exc}")
+                logger.exception(f"Worker error for {email}: {exc}")
+                with lock_failed:
+                    failed_count += 1
             finally:
                 with lock_count:
                     processed += 1
 
         with ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:
             futures = [ex.submit(worker, it) for it in items]
-            for _ in as_completed(futures):
-                pass
+            for fut in as_completed(futures):
+                try:
+                    fut.result()
+                except Exception:
+                    # Уже учтено в failed_count, просто продолжаем собирать остальные
+                    pass
         # Перезаписываем mails.txt, удаляя успешно зарегистрированные
         remaining = [ln for ln in original_lines if ln.strip() not in set(consumed_raw)]
         mails_path.write_text("\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
@@ -333,9 +346,10 @@ def main() -> None:
             logger.info("[confirm] In-page mode enabled by default (same browser/page)")
         lock_out = threading.Lock()
         lock_count = threading.Lock()
+        lock_failed = threading.Lock()
 
         def worker_acc(item: tuple[str, str]):
-            nonlocal processed
+            nonlocal processed, failed_count
             email, password = item
             proxy_raw = get_thread_proxy_raw()
             pw_proxy = build_proxy_arg(proxy_raw) if proxy_raw else None
@@ -377,20 +391,32 @@ def main() -> None:
                             final_ok = True
                 else:
                     logger.warning(f"FAIL: {email} | {res.error}")
+                    with lock_failed:
+                        failed_count += 1
                 if final_ok:
                     logger.info(f"OK: {email}")
+                else:
+                    with lock_failed:
+                        failed_count += 1
             except Exception as exc:
-                logger.warning(f"Worker error for {email}: {exc}")
+                logger.exception(f"Worker error for {email}: {exc}")
+                with lock_failed:
+                    failed_count += 1
             finally:
                 with lock_count:
                     processed += 1
 
         with ThreadPoolExecutor(max_workers=max(1, args.workers)) as ex:
             futures = [ex.submit(worker_acc, it) for it in items_acc]
-            for _ in as_completed(futures):
-                pass
+            for fut in as_completed(futures):
+                try:
+                    fut.result()
+                except Exception:
+                    pass
 
     logger.info(f"Готово. Обработано: {processed}")
+    if failed_count > 0:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
