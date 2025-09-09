@@ -546,6 +546,7 @@ def main() -> None:
     post_stage = 0  # forward-only steps after tutorial
     reward_click_time = 0.0  # time of last 'Получить награду' click
     final_wait_start = 0.0   # time when 'game_ungar' first seen
+    final_seen_count = 0     # how many times we saw final state outside post
     reached_ungar = False
     # hotkeys state
     stop_requested = False
@@ -630,7 +631,13 @@ def main() -> None:
             # Финал: как только попали в post-фазу — принимаем финальные сцены
             if state in {'game_ungar', 'game_nagrada_code'}:
                 if phase != 'post':
+                    final_seen_count += 1
                     logger.debug("Ignore final state outside post phase")
+                    if final_seen_count >= 3:
+                        logger.info("Final state seen 3x outside post — closing game and skipping account")
+                        _close_game()
+                        reached_ungar = True
+                        break
                     continue
                 if post_stage < 7:
                     post_stage = 7
@@ -698,6 +705,17 @@ def main() -> None:
                     # скип ролика
                     _press_game_key(win32con.VK_ESCAPE)
                     time.sleep(0.2)
+                elif state == 'game_tutorial2':
+                    # Вернуться к ESC и инициировать скип обучения
+                    _press_game_key(win32con.VK_ESCAPE)
+                    time.sleep(0.5)
+                    _move_center_of_game()
+                    btn_main = templates_dir / "skip_tutorial_btn1.png"
+                    btn_alt = templates_dir / "skip_tutorial_btn1_1.png"
+                    # Пытаемся нажать первую кнопку скипа
+                    if not _click_template_aggressive(btn_main, timeout=1.2):
+                        _click_template_aggressive(btn_alt, timeout=1.2)
+                    classify_paused = True
                 # после восстановления — переходим к следующей итерации цикла
                 time.sleep(0.2)
                 continue
@@ -709,11 +727,11 @@ def main() -> None:
             time.sleep(0.3)
             continue
 
-        if (not classify_paused and state in {"game_cutscena", "game_tutorial1"}):
+        if (not classify_paused and state in {"game_cutscena", "game_tutorial1", "game_tutorial2"}):
             logger.info("Planned action: press Enter")
             time.sleep(THINK_DELAY)
             _press_game_key(win32con.VK_RETURN)
-            if state == 'game_tutorial1':
+            if state in {'game_tutorial1', 'game_tutorial2'}:
                 phase = 'tutorial'
                 # Механический скип сразу после Enter: ESC -> клик skip -> подтверждение
                 time.sleep(3.0)
