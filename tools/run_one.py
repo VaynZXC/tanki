@@ -76,12 +76,17 @@ def main() -> None:
     # Give the game a moment to spawn the window
     time.sleep(5.0)
 
+    # Enforce hard cap of 5 minutes for game flow
+    max_secs_capped = min(int(args.max_secs_game), 300)
+    if max_secs_capped != int(args.max_secs_game):
+        logger.info(f"Cap max-secs-game to 300s (was {args.max_secs_game})")
+
     cmd = [
         sys.executable,
         "-m", "tools.run_game_flow",
         "--dataset", str(dataset_root),
         "--templates", str(templates_dir),
-        "--max-secs", str(args.max_secs_game),
+        "--max-secs", str(max_secs_capped),
     ]
     if args.result_file:
         cmd += ["--result-file", args.result_file]

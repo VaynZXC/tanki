@@ -115,7 +115,7 @@ def main() -> None:
             "--templates", str(templates_dir),
             "--email", creds.email,
             "--password", creds.password,
-            "--max-secs-game", str(args.max_secs_game),
+            "--max-secs-game", str(min(int(args.max_secs_game), 300)),
             "--result-file", str(result_tmp),
         ]
         if args.vision_snapshots:
