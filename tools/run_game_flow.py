@@ -682,17 +682,37 @@ def main() -> None:
                         _press_game_key(win32con.VK_RETURN)
                         time.sleep(0.2)
                     else:
-                        # 2) Иначе кликаем по иконке: сначала тот, что ожидается стадией, потом другой
+                        # 2) Попробуем найти и кликнуть ожидаемый танк; если не видно — полный рескан: сверху вниз
                         preferred_first = 'is7'
                         if phase == 'post' and post_stage >= 40:
                             preferred_first = 'fv4005'
                         order = [preferred_first, 'fv4005' if preferred_first == 'is7' else 'is7']
                         clicked = False
                         for tank_id in order:
-                            if _click_tank_icon_by_id(templates_dir, tank_id):
+                            icon_path = templates_dir / f"{tank_id}.png"
+                            pos_now = _locate_icon(icon_path)
+                            if pos_now:
+                                _click_many(pos_now[0], pos_now[1], times=2, interval=0.06)
                                 clicked = True
+                            else:
+                                # Полный рескан: отскроллить в самый верх и пройти вниз
+                                _scroll_to_top()
+                                ok_scan, _used = _find_and_click_tank_by_memory(tank_id, icon_path, max_steps=80, step_units=200)
+                                if ok_scan:
+                                    clicked = True
+                            if clicked:
+                                # Зафиксируем стадию и список выбранных
+                                try:
+                                    chosen_tanks.append(tank_id)
+                                except Exception:
+                                    pass
+                                if phase == 'post':
+                                    if post_stage < 40:
+                                        post_stage = 31  # первый танк выбран
+                                    else:
+                                        post_stage = 51  # второй танк выбран
                                 break
-                        # если всё ещё не получилось — мягкий Enter как фолбэк
+                        # если всё ещё не получилось — мягкий Enter как фолбэк (ESC запрещён на этой сцене)
                         if not clicked:
                             _press_game_key(win32con.VK_RETURN)
                 elif state == 'game_loading':
