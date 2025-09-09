@@ -57,6 +57,7 @@ EMAIL_TEMPLATE = Path("dataset/templates/email.png")
 PASSWORD_TEMPLATE = Path("dataset/templates/password.png")
 LOGIN_BTN_TEMPLATE = Path("dataset/templates/login_btn.png")
 LOGIN_ERROR_TEMPLATE = Path("dataset/templates/login_error.png")
+PLAY_BTN_TEMPLATE = Path("dataset/templates/play_btn.png")
 class LoginInvalidError(Exception):
     """Raised when login credentials are invalid (explicit UI error detected)."""
     pass
@@ -571,6 +572,27 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
             logger.info("Вернулись на главную")
             break
         time.sleep(0.15)
+
+    # Дополнительная проверка: видна ли кнопка "Играть"; если нет — проверить login_error
+    if PLAY_BTN_TEMPLATE.exists():
+        play_visible = False
+        for _ in range(10):
+            pos_play = locate_template_on_launcher(PLAY_BTN_TEMPLATE, panel="any", confidence=0.86)
+            if not pos_play:
+                pos_play = locate_template_on_launcher(PLAY_BTN_TEMPLATE, panel="any", confidence=0.80, grayscale=True)
+            if pos_play:
+                play_visible = True
+                break
+            time.sleep(0.2)
+        if not play_visible and LOGIN_ERROR_TEMPLATE.exists():
+            for _ in range(10):
+                pos_err = locate_template_on_launcher(LOGIN_ERROR_TEMPLATE, panel="any", confidence=0.86)
+                if not pos_err:
+                    pos_err = locate_template_on_launcher(LOGIN_ERROR_TEMPLATE, panel="any", confidence=0.80, grayscale=True)
+                if pos_err:
+                    logger.error("После логина кнопка 'Играть' не видна и обнаружен login_error.png — пропускаю аккаунт")
+                    raise LoginInvalidError("Invalid credentials after login (no Play button, login_error present)")
+                time.sleep(0.2)
 
     # 5) нажать играть (наведение + 1с задержка перед кликом)
     pos = _to_abs(*PLAY_BTN_RXY)
