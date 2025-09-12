@@ -726,17 +726,28 @@ def main() -> None:
                     # аналогично: переместим курсор в якорную позицию для последующих скроллов
                     _move_to_scroll_anchor()
                 elif state == 'game_video':
-                    # Робастный скип ролика: фокус, клик в центр и несколько ESC + фолбэки
+                    # Робастный скип ролика на ноутбуках: лог + несколько попыток ESC/Enter/Space с проверкой
+                    logger.warning("[stuck] game_video: force skipping with ESC/Enter/Space")
                     _focus_game()
                     _click_center_of_game()
                     time.sleep(0.1)
-                    for _ in range(2):
+                    for attempt in range(1, 6):
+                        logger.info(f"[stuck] game_video: ESC sequence {attempt}/5")
                         _press_game_key(win32con.VK_ESCAPE)
                         time.sleep(0.12)
-                    _press_game_key(win32con.VK_RETURN)
-                    time.sleep(0.10)
-                    _press_game_key(win32con.VK_SPACE)
-                    time.sleep(0.10)
+                        _press_game_key(win32con.VK_RETURN)
+                        time.sleep(0.10)
+                        _press_game_key(win32con.VK_SPACE)
+                        time.sleep(0.10)
+                        # Проверим, ушла ли сцена с ролика
+                        try:
+                            img2 = _grab_game_image() or img
+                            m2 = clf.classify(img2)
+                            if not (m2 and m2.state == 'game_video'):
+                                logger.info("[stuck] game_video: scene changed after ESC sequence")
+                                break
+                        except Exception:
+                            pass
                 elif state == 'game_tutorial2':
                     # Вернуться к ESC и инициировать скип обучения
                     _press_game_key(win32con.VK_ESCAPE)
