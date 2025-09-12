@@ -17,6 +17,7 @@ from loguru import logger
 from wotbot.vision.state_classifier import PHashStateClassifier
 from wotbot.launcher.ensure_visible import ensure_launcher_visible
 from wotbot.win.window_finder import find_launcher_hwnd_by_titles
+from wotbot.win.window_actions import restore_and_focus_window
 from wotbot.config import load_launcher_config
 from wotbot.vision.template_finder import click_template_on_launcher, locate_template_on_launcher
 
@@ -261,6 +262,15 @@ def _get_launcher_hwnd() -> Optional[int]:
 	return hwnd
 
 
+def _focus_launcher() -> None:
+    try:
+        hwnd = _get_launcher_hwnd()
+        if hwnd:
+            restore_and_focus_window(hwnd)
+    except Exception:
+        pass
+
+
 def _play_button_visible() -> bool:
     if not PLAY_BTN_TEMPLATE.exists():
         return False
@@ -271,7 +281,34 @@ def _play_button_visible() -> bool:
 
 
 def _click_play_button() -> None:
-    # Сначала пробуем клик по шаблону, затем по относительной точке
+    # Сначала фокусируем лаунчер
+    _focus_launcher()
+    # Попробуем через UIA
+    try:
+        hwnd = _get_launcher_hwnd()
+        if hwnd:
+            wnd = auto.ControlFromHandle(hwnd)
+            wnd.SetFocus()
+            # Попробуем найти кнопку по имени (ru/en)
+            candidates = [
+                wnd.ButtonControl(Name="Играть"),
+                wnd.ButtonControl(Name="Play"),
+                wnd.ButtonControl(searchDepth=30, AutomationId="Play"),
+            ]
+            for btn in candidates:
+                try:
+                    if btn and btn.Exists(1):
+                        try:
+                            btn.GetInvokePattern().Invoke()
+                        except Exception:
+                            btn.Click()
+                        time.sleep(0.2)
+                        return
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    # Если UIA не сработал, пробуем клик по шаблону, затем по относительной точке
     clicked = False
     if PLAY_BTN_TEMPLATE.exists():
         try:
@@ -287,6 +324,7 @@ def _click_play_button() -> None:
             x, y = pos
             pyautogui.moveTo(x, y)
             time.sleep(0.2)
+            # На ноутбуках — сразу двойной клик
             pyautogui.doubleClick(x, y)
         else:
             _click_relative(*PLAY_BTN_RXY)
@@ -690,14 +728,15 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
     # 5) нажать играть (с проверкой, что игра запускается)
     _click_play_button()
     time.sleep(STEP_DELAY)
-    # На ноутбуках иногда первый клик не срабатывает — повторим и проверим исчезновение кнопки
+    # На ноутбуках иногда первый клик не срабатывает — повторим и проверим изменение кнопки
     tried = 1
-    max_tries = 3
+    max_tries = 4
     while tried < max_tries:
-        time.sleep(0.6)
+        time.sleep(0.7)
         if not _play_button_visible():
+            logger.info("Play button not visible — assuming game is launching")
             break
-        logger.info("Play button still visible — retry click")
+        logger.info("Play button still visible — retry click (UIA/template/relative)")
         _click_play_button()
         tried += 1
     # 6) убедиться, что окно игры действительно появилось
