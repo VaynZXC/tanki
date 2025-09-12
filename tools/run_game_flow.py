@@ -726,9 +726,17 @@ def main() -> None:
                     # аналогично: переместим курсор в якорную позицию для последующих скроллов
                     _move_to_scroll_anchor()
                 elif state == 'game_video':
-                    # скип ролика
-                    _press_game_key(win32con.VK_ESCAPE)
-                    time.sleep(0.2)
+                    # Робастный скип ролика: фокус, клик в центр и несколько ESC + фолбэки
+                    _focus_game()
+                    _click_center_of_game()
+                    time.sleep(0.1)
+                    for _ in range(2):
+                        _press_game_key(win32con.VK_ESCAPE)
+                        time.sleep(0.12)
+                    _press_game_key(win32con.VK_RETURN)
+                    time.sleep(0.10)
+                    _press_game_key(win32con.VK_SPACE)
+                    time.sleep(0.10)
                 elif state == 'game_tutorial2':
                     # Вернуться к ESC и инициировать скип обучения
                     _press_game_key(win32con.VK_ESCAPE)
