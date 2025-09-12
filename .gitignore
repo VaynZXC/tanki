@@ -52,10 +52,6 @@ mails.txt
 accounts_final/
 vision_snaps/
 
-# Large/volatile datasets (keep curated templates, ignore raw dumps)
-dataset/raw/
-dataset/game_raw/
-
 # Playwright reports (if any)
 playwright-report/
 test-results/
