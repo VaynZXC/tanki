@@ -261,6 +261,65 @@ def _get_launcher_hwnd() -> Optional[int]:
 	return hwnd
 
 
+def _ensure_game_closed(max_wait_sec: float = 8.0) -> None:
+    """If a game client window is present, attempt to close it gracefully, then force-kill.
+
+    This prevents the next account from failing to launch due to an already running game.
+    """
+    try:
+        import win32con
+        import win32gui
+        import psutil
+    except Exception:
+        return
+    try:
+        from wotbot.config import load_game_config
+        from wotbot.win.window_finder import find_game_hwnd_by_titles
+    except Exception:
+        return
+    try:
+        cfg_g = load_game_config()
+        hwnd = find_game_hwnd_by_titles(cfg_g.window_title_patterns)
+        if not hwnd:
+            return
+        # 1) Попросить корректное закрытие через системную команду
+        try:
+            win32gui.PostMessage(hwnd, win32con.WM_SYSCOMMAND, win32con.SC_CLOSE, 0)
+        except Exception:
+            pass
+        t_end = time.time() + max_wait_sec
+        while time.time() < t_end:
+            if not win32gui.IsWindow(hwnd):
+                return
+            time.sleep(0.2)
+        # 2) WM_CLOSE напрямую
+        if win32gui.IsWindow(hwnd):
+            try:
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            except Exception:
+                pass
+            t_end2 = time.time() + 3.0
+            while time.time() < t_end2:
+                if not win32gui.IsWindow(hwnd):
+                    return
+                time.sleep(0.2)
+        # 3) Жёсткое завершение процесса
+        if win32gui.IsWindow(hwnd):
+            try:
+                _, pid = win32gui.GetWindowThreadProcessId(hwnd)
+                if pid:
+                    proc = psutil.Process(pid)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.5)
+                    except Exception:
+                        proc.kill()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _uia_fill_login_fields(creds: Credentials) -> bool:
 	"""Try to set email/password using UIAutomation ValuePattern."""
 	try:
@@ -368,6 +427,8 @@ def _find_template(path: Path, panel: str = "any") -> Optional[Tuple[int, int]]:
 
 
 def login_once(dataset_root: Path, creds: Credentials) -> bool:
+    # Закрываем уже запущенную игру, если она осталась от предыдущего аккаунта
+    _ensure_game_closed()
     if not ensure_launcher_visible():
         logger.error("Лаунчер не удалось показать")
         return False

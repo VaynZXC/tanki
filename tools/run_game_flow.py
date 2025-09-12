@@ -153,6 +153,7 @@ def _write_scroll_count(tank_id: str, count: int) -> None:
 
 def _scroll_to_top(max_steps: int = 40, step_amount: int = 600) -> None:
     """Aggressively scroll up to the start of the list before measurements."""
+    _focus_game()
     region = _game_region()
     if not region:
         return
@@ -169,6 +170,7 @@ def _scroll_to_top(max_steps: int = 40, step_amount: int = 600) -> None:
 
 
 def _move_to_scroll_anchor() -> tuple[int, int] | None:
+    _focus_game()
     region = _game_region()
     if not region:
         return None
@@ -183,6 +185,7 @@ def _move_to_scroll_anchor() -> tuple[int, int] | None:
 
 
 def _scroll_step_down(units: int = 200) -> None:
+    _focus_game()
     anchor = _move_to_scroll_anchor()
     if not anchor:
         return
@@ -194,6 +197,7 @@ def _scroll_step_down(units: int = 200) -> None:
 
 def _rapid_scroll_down(steps: int, units: int = 200, delay: float = 0.015) -> None:
     """Fast consecutive scrolls: anchor once, then scroll N steps with tiny delay."""
+    _focus_game()
     anchor = _move_to_scroll_anchor()
     if not anchor:
         return
