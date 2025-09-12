@@ -261,6 +261,37 @@ def _get_launcher_hwnd() -> Optional[int]:
 	return hwnd
 
 
+def _play_button_visible() -> bool:
+    if not PLAY_BTN_TEMPLATE.exists():
+        return False
+    pos = locate_template_on_launcher(PLAY_BTN_TEMPLATE, panel="any", confidence=0.86)
+    if not pos:
+        pos = locate_template_on_launcher(PLAY_BTN_TEMPLATE, panel="any", confidence=0.80, grayscale=True)
+    return bool(pos)
+
+
+def _click_play_button() -> None:
+    # Сначала пробуем клик по шаблону, затем по относительной точке
+    clicked = False
+    if PLAY_BTN_TEMPLATE.exists():
+        try:
+            if click_template_on_launcher(PLAY_BTN_TEMPLATE, panel="any", confidence=0.86):
+                clicked = True
+            elif click_template_on_launcher(PLAY_BTN_TEMPLATE, panel="any", confidence=0.80, grayscale=True):
+                clicked = True
+        except Exception:
+            clicked = False
+    if not clicked:
+        pos = _to_abs(*PLAY_BTN_RXY)
+        if pos is not None:
+            x, y = pos
+            pyautogui.moveTo(x, y)
+            time.sleep(0.2)
+            pyautogui.doubleClick(x, y)
+        else:
+            _click_relative(*PLAY_BTN_RXY)
+
+
 def _ensure_game_closed(max_wait_sec: float = 8.0) -> None:
     """If a game client window is present, attempt to close it gracefully, then force-kill.
 
@@ -656,15 +687,19 @@ def login_once(dataset_root: Path, creds: Credentials) -> bool:
                 time.sleep(0.2)
 
     # 5) нажать играть (наведение + 1с задержка перед кликом)
-    pos = _to_abs(*PLAY_BTN_RXY)
-    if pos is not None:
-        x, y = pos
-        pyautogui.moveTo(x, y)
-        time.sleep(1.0)
-        pyautogui.click(x, y)
-        time.sleep(STEP_DELAY)
-    else:
-        _click_relative(*PLAY_BTN_RXY)
+    # 5) нажать играть (с проверкой, что игра запускается)
+    _click_play_button()
+    time.sleep(STEP_DELAY)
+    # На ноутбуках иногда первый клик не срабатывает — повторим и проверим исчезновение кнопки
+    tried = 1
+    max_tries = 3
+    while tried < max_tries:
+        time.sleep(0.6)
+        if not _play_button_visible():
+            break
+        logger.info("Play button still visible — retry click")
+        _click_play_button()
+        tried += 1
     # 6) убедиться, что окно игры действительно появилось
     try:
         from wotbot.config import load_game_config
